@@ -12,9 +12,10 @@ Usage:
 
 The `callback_output` callable is invoked for each stdout line.
 """
-from typing import Dict, Any, Callable, List
+from typing import Dict, Any, Callable, List, Optional
 import subprocess
 import sys
+from pathlib import Path
 
 
 class RobotExecutor:
@@ -32,7 +33,7 @@ class RobotExecutor:
         cmd.append(str(runner_path))
         return cmd
 
-    def run(self, runner_path: str, params: Dict[str, Any], callback_output: Callable[[str], None]) -> int:
+    def run(self, runner_path: str, params: Dict[str, Any], callback_output: Callable[[str], None], working_dir: Optional[str] = None) -> int:
         """Run the robot runner and stream output.
 
         - `runner_path`: path to the .robot file
@@ -43,13 +44,18 @@ class RobotExecutor:
         """
         cmd = self._build_command(runner_path, params)
 
-        # Start the process
+        cwd = None
+        if working_dir:
+            cwd = str(Path(working_dir))
+
+        # Start the process; set working directory so relative resources are resolved
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
             bufsize=1,
+            cwd=cwd,
         )
 
         # Stream stdout line by line

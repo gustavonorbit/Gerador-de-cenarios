@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.4.2 (Python 3.13.9 on darwin)" generated="2026-03-14T20:55:43.295802" rpa="false" schemaversion="5">
+<suite id="s1" name="Open Browser" source="/Users/gustavo/Gerador-de-cenarios/tests_robot/open_browser.robot">
+<test id="s1-t1" name="Abrir Navegador Visivel" line="9">
+<kw name="Start Chromedriver" owner="driver_helper">
+<msg time="2026-03-14T20:55:43.682305" level="INFO">====== WebDriver manager ======</msg>
+<msg time="2026-03-14T20:55:43.949296" level="INFO">Get LATEST chromedriver version for google-chrome</msg>
+<msg time="2026-03-14T20:55:44.198325" level="INFO">Get LATEST chromedriver version for google-chrome</msg>
+<msg time="2026-03-14T20:55:44.364253" level="INFO">There is no [mac64] chromedriver "145.0.7632.117" for browser google-chrome "145.0.7632" in cache</msg>
+<msg time="2026-03-14T20:55:44.377014" level="INFO">Get LATEST chromedriver version for google-chrome</msg>
+<msg time="2026-03-14T20:55:44.814289" level="INFO">WebDriver version 145.0.7632.117 selected</msg>
+<msg time="2026-03-14T20:55:44.820025" level="INFO">Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/145.0.7632.117/mac-x64/chromedriver-mac-x64.zip</msg>
+<msg time="2026-03-14T20:55:44.820140" level="INFO">About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/145.0.7632.117/mac-x64/chromedriver-mac-x64.zip</msg>
+<msg time="2026-03-14T20:55:45.156376" level="INFO">Driver downloading response is 200</msg>
+<msg time="2026-03-14T20:55:46.524411" level="INFO">Get LATEST chromedriver version for google-chrome</msg>
+<msg time="2026-03-14T20:55:46.804741" level="INFO">Driver has been saved in cache [/Users/gustavo/.wdm/drivers/chromedriver/mac64/145.0.7632.117]</msg>
+<msg time="2026-03-14T20:55:48.010287" level="INFO">${remote} = http://localhost:61557</msg>
+<var>${remote}</var>
+<arg>headless=False</arg>
+<status status="PASS" start="2026-03-14T20:55:43.681953" elapsed="4.328536"/>
+</kw>
+<kw name="Log" owner="BuiltIn">
+<msg time="2026-03-14T20:55:48.012911" level="INFO">Chromedriver remoto: http://localhost:61557</msg>
+<arg>Chromedriver remoto: ${remote}</arg>
+<doc>Logs the given message with the given level.</doc>
+<status status="PASS" start="2026-03-14T20:55:48.011796" elapsed="0.001227"/>
+</kw>
+<kw name="Open Browser" owner="SeleniumLibrary">
+<msg time="2026-03-14T20:55:48.014344" level="INFO">Opening browser 'chrome' to base url 'about:blank' through remote server at 'http://localhost:61557'.</msg>
+<arg>${URL}</arg>
+<arg>chrome</arg>
+<arg>remote_url=${remote}</arg>
+<doc>Opens a new browser instance to the optional ``url``.</doc>
+<status status="PASS" start="2026-03-14T20:55:48.013662" elapsed="3.998933"/>
+</kw>
+<kw name="Sleep" owner="BuiltIn">
+<msg time="2026-03-14T20:56:52.015311" level="INFO">Slept 1 minute.</msg>
+<arg>60</arg>
+<doc>Pauses the test executed for the given time.</doc>
+<status status="PASS" start="2026-03-14T20:55:52.013016" elapsed="60.002462"/>
+</kw>
+<kw name="Stop Chromedriver" owner="driver_helper">
+<status status="PASS" start="2026-03-14T20:56:52.015736" elapsed="0.065565"/>
+</kw>
+<kw name="Close All Browsers" owner="SeleniumLibrary" type="TEARDOWN">
+<msg time="2026-03-14T20:56:52.084048" level="WARN">Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.085563" level="WARN">Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.087580" level="WARN">Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.089371" level="ERROR">When closing browser, received exception: HTTPConnectionPool(host='localhost', port=61557): Max retries exceeded with url: /session/0e9b1802f33049f9ef0a50ef7a57de1f (Caused by NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused"))</msg>
+<msg time="2026-03-14T20:56:52.090317" level="INFO">Cannot capture screenshot because no browser is open.</msg>
+<msg time="2026-03-14T20:56:52.091033" level="FAIL">MaxRetryError: HTTPConnectionPool(host='localhost', port=61557): Max retries exceeded with url: /session/0e9b1802f33049f9ef0a50ef7a57de1f (Caused by NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused"))</msg>
+<doc>Closes all open browsers and resets the browser cache.</doc>
+<status status="FAIL" start="2026-03-14T20:56:52.082077" elapsed="0.047293">MaxRetryError: HTTPConnectionPool(host='localhost', port=61557): Max retries exceeded with url: /session/0e9b1802f33049f9ef0a50ef7a57de1f (Caused by NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused"))</status>
+</kw>
+<status status="FAIL" start="2026-03-14T20:55:43.680864" elapsed="68.448806">Teardown failed:
+MaxRetryError: HTTPConnectionPool(host='localhost', port=61557): Max retries exceeded with url: /session/0e9b1802f33049f9ef0a50ef7a57de1f (Caused by NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused"))</status>
+</test>
+<status status="FAIL" start="2026-03-14T20:55:43.297630" elapsed="68.833382"/>
+</suite>
+<statistics>
+<total>
+<stat pass="0" fail="1" skip="0">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat name="Open Browser" id="s1" pass="0" fail="1" skip="0">Open Browser</stat>
+</suite>
+</statistics>
+<errors>
+<msg time="2026-03-14T20:56:52.084048" level="WARN">Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.085563" level="WARN">Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.087580" level="WARN">Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused")': /session/0e9b1802f33049f9ef0a50ef7a57de1f</msg>
+<msg time="2026-03-14T20:56:52.089371" level="ERROR">When closing browser, received exception: HTTPConnectionPool(host='localhost', port=61557): Max retries exceeded with url: /session/0e9b1802f33049f9ef0a50ef7a57de1f (Caused by NewConnectionError("HTTPConnection(host='localhost', port=61557): Failed to establish a new connection: [Errno 61] Connection refused"))</msg>
+</errors>
+</robot>

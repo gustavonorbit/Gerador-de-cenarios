@@ -1,2 +1,5 @@
 PySide6
 robotframework
+robotframework-seleniumlibrary
+selenium
+webdriver-manager

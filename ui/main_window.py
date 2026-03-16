@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QSizePolicy,
+    QCheckBox,
 )
 from PySide6.QtCore import Signal
 
@@ -26,6 +27,8 @@ from core.config_manager import ConfigManager
 from ui.console_panel import ConsolePanel
 from ui.settings_dialog import SettingsDialog
 from ui.execution_window import ExecutionWindow
+from core.suite_builder import build_temp_suite
+from core.robot_executor import RobotExecutor
 
 
 class MainWindow(QMainWindow):
@@ -74,6 +77,9 @@ class MainWindow(QMainWindow):
 
         # Execution controls
         exec_layout = QHBoxLayout()
+        self.show_ui_chk = QCheckBox("Mostrar tela da automação")
+        exec_layout.addWidget(self.show_ui_chk)
+
         self.open_exec_btn = QPushButton("Abrir tela de execução")
         self.open_exec_btn.clicked.connect(self._open_execution_window)
         self.run_btn = QPushButton("Executar")
@@ -118,21 +124,81 @@ class MainWindow(QMainWindow):
         if self.kw_list.count() == 0:
             self.console.append_text("Erro: nenhuma keyword adicionada à suite.")
             return
-
         # Gather keywords
         kws = [self.kw_list.item(i).text() for i in range(self.kw_list.count())]
 
-        # Simulate execution in background thread to keep UI responsive
-        def _run_sim():
+        # Build temporary suite (include base resource if configured)
+        base_res = self.config.get_base_resource_path()
+        resource_arg = None
+        if base_res:
+            repo_path = Path(repo).resolve()
+            base_cfg = base_res.strip()
+            base_p = Path(base_cfg)
+
+            # If relative path provided, normalize against repo and avoid duplicated repo folder
+            if not base_p.is_absolute():
+                parts = base_p.parts
+                if parts and parts[0] == repo_path.name:
+                    # remove the duplicated leading folder name
+                    if len(parts) > 1:
+                        base_p = Path(*parts[1:])
+                    else:
+                        base_p = Path('.')
+                abs_path = (repo_path / base_p).resolve()
+                if not abs_path.exists():
+                    self.console.append_text(f"Erro: resource base não encontrado: {abs_path}")
+                    return
+                # use relative path to repo for Resource entry
+                try:
+                    rel = abs_path.relative_to(repo_path)
+                    resource_arg = str(rel).replace('\\', '/')
+                except Exception:
+                    resource_arg = str(base_p).replace('\\', '/')
+            else:
+                # absolute path provided
+                abs_path = base_p.resolve()
+                if repo_path in abs_path.parents or abs_path == repo_path:
+                    # convert to relative if inside repo
+                    try:
+                        rel = abs_path.relative_to(repo_path)
+                        resource_arg = str(rel).replace('\\', '/')
+                    except Exception:
+                        resource_arg = str(abs_path)
+                else:
+                    resource_arg = str(abs_path)
+
+        try:
+            temp_path = build_temp_suite(kws, repo_root=repo, resource_path=resource_arg)
             self.append_signal.emit("Iniciando execução...")
             self.append_signal.emit(f"Repositório: {repo}")
-            for idx, k in enumerate(kws, start=1):
-                time.sleep(0.6)
-                self.append_signal.emit(f"Executando keyword {idx}: {k}")
-            time.sleep(0.4)
-            self.append_signal.emit("Execução finalizada.")
+            show_ui_state = self.show_ui_chk.isChecked()
+            self.append_signal.emit(f"Mostrar tela: {'ativado' if show_ui_state else 'desativado'}")
+            self.append_signal.emit(f"Suite temporária gerada: {temp_path}")
+        except Exception as e:
+            self.append_signal.emit(f"Erro ao gerar suite temporária: {e}")
+            return
 
-        t = threading.Thread(target=_run_sim, daemon=True)
+        def _run_real():
+            executor = RobotExecutor()
+            params = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
+
+            def _cb(line: str):
+                # Forward Robot stdout lines to UI console
+                try:
+                    self.append_signal.emit(line)
+                except Exception:
+                    pass
+
+            try:
+                code = executor.run(temp_path, params, _cb, working_dir=repo)
+                if code == 0:
+                    self.append_signal.emit("Execução finalizada com sucesso")
+                else:
+                    self.append_signal.emit(f"Execução finalizada com código de saída: {code}")
+            except Exception as e:
+                self.append_signal.emit(f"Falha na execução: {e}")
+
+        t = threading.Thread(target=_run_real, daemon=True)
         t.start()
 
     def _handle_output_line(self, line: str):
