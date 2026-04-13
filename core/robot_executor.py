@@ -25,12 +25,15 @@ class RobotExecutor:
     def _build_command(self, runner_path: str, params: Dict[str, Any]) -> List[str]:
         # Use python -m robot to ensure execution via the current interpreter
         cmd = [sys.executable, "-m", "robot", "--output", "NONE", "--log", "NONE", "--report", "NONE"]
+        # Extract special params (tests) before adding variables to avoid sending them as -v
+        tests = None
+        if params is not None and isinstance(params, dict):
+            tests = params.pop("__tests__", None)
         # Add variables
         for k, v in (params or {}).items():
             # Robot variable format: -v name:value
             cmd.extend(["-v", f"{k}:{v}"])
         # Add tests selectors if provided in params_tests
-        tests = params.pop("__tests__", None)
         if tests:
             for t in tests:
                 cmd.extend(["-t", str(t)])

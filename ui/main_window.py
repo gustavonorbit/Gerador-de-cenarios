@@ -35,6 +35,7 @@ from core.robot_executor import RobotExecutor
 
 class MainWindow(QMainWindow):
     append_signal = Signal(str)
+    MAX_SUITE_ITEMS = 5
 
     def __init__(self, project_root: Optional[Path] = None):
         super().__init__()
@@ -118,6 +119,14 @@ class MainWindow(QMainWindow):
         self.show_ui_chk = QCheckBox("Mostrar tela da automação")
         exec_layout.addWidget(self.show_ui_chk)
 
+        # Execution DB selection
+        exec_layout.addWidget(QLabel("Base de execução:"))
+        from PySide6.QtWidgets import QComboBox
+        self.db_combo = QComboBox()
+        self.db_combo.addItems(["SQL", "SAP", "ORACLE"])
+        self.db_combo.setCurrentText("SQL")
+        exec_layout.addWidget(self.db_combo)
+
         self.open_exec_btn = QPushButton("Abrir tela de execução")
         self.open_exec_btn.clicked.connect(self._open_execution_window)
         self.run_btn = QPushButton("Executar")
@@ -147,12 +156,13 @@ class MainWindow(QMainWindow):
         name = meta.get("name")
         kind = meta.get("kind")
         path = meta.get("path")
-        if self.kw_list.count() >= 50:
-            self.console.append_text("Limite de 50 itens atingido")
+        if self.kw_list.count() >= self.MAX_SUITE_ITEMS:
+            self.console.append_text(f"Limite de {self.MAX_SUITE_ITEMS} itens atingido")
             return
-        li = QListWidgetItem(f"{name} [{kind}] ({Path(path).name})")
+        li = QListWidgetItem()
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
+        self._set_item_widget(li, name, kind, path, meta)
         self.keyword_edit.clear()
 
     def _open_execution_window(self):
@@ -192,6 +202,13 @@ class MainWindow(QMainWindow):
         def _run_all():
             # run keywords (single temp suite) if present
             try:
+                # Log and pass CURRENT_DB
+                try:
+                    current_db = (self.db_combo.currentText() if hasattr(self, 'db_combo') else None) or "SQL"
+                except Exception:
+                    current_db = "SQL"
+                self.append_signal.emit(f"Base de execução selecionada: {current_db}")
+
                 if keyword_items:
                     kws = [m["name"] for m in keyword_items]
                     resource_files = []
@@ -201,13 +218,16 @@ class MainWindow(QMainWindow):
                             resource_files.append(f)
                     temp_path = build_temp_suite(kws, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
                     self.append_signal.emit("Iniciando execução (keywords)...")
-                    code = executor.run(temp_path, dict(params_common), _cb, working_dir=str(self.automation_root or self.app_root))
+                    params = dict(params_common)
+                    params["CURRENT_DB"] = current_db
+                    code = executor.run(temp_path, params, _cb, working_dir=str(self.automation_root or self.app_root))
                     self.append_signal.emit(f"Execução keywords finalizada com código: {code}")
 
                 # run tests grouped by file
                 for file, tests in test_map.items():
                     self.append_signal.emit(f"Iniciando execução de testes em: {file}")
                     params = dict(params_common)
+                    params["CURRENT_DB"] = current_db
                     params["__tests__"] = tests
                     code = executor.run(file, params, _cb, working_dir=str(self.automation_root or self.app_root))
                     self.append_signal.emit(f"Execução {Path(file).name} finalizada com código: {code}")
@@ -219,6 +239,37 @@ class MainWindow(QMainWindow):
 
     def _handle_output_line(self, line: str):
         self.console.append_text(line)
+
+    def _set_item_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
+        """Create a widget for the QListWidgetItem with label and remove button."""
+        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(4, 2, 4, 2)
+
+        label = QLabel(f"{name} [{kind}] ({Path(path).name})")
+        layout.addWidget(label)
+
+        remove_btn = QPushButton("Remover")
+        remove_btn.setFixedWidth(80)
+
+        def _on_remove():
+            # find and remove the QListWidgetItem
+            try:
+                row = self.kw_list.row(list_item)
+                if row >= 0:
+                    taken = self.kw_list.takeItem(row)
+                    # explicit deletion of widget
+                    widget.deleteLater()
+                    self.append_signal.emit(f"Item removido da suite: {name}")
+            except Exception:
+                pass
+
+        remove_btn.clicked.connect(_on_remove)
+        layout.addWidget(remove_btn)
+
+        self.kw_list.setItemWidget(list_item, widget)
 
     # --- indexing and search handlers ---
     def _index_project(self):
@@ -252,12 +303,16 @@ class MainWindow(QMainWindow):
         meta = item.data(Qt.UserRole)
         if not meta:
             return
-        if self.kw_list.count() >= 50:
-            self.console.append_text("Limite de 50 itens atingido")
+        if self.kw_list.count() >= self.MAX_SUITE_ITEMS:
+            self.console.append_text(f"Limite de {self.MAX_SUITE_ITEMS} itens atingido")
             return
-        li = QListWidgetItem(item.text())
+        name = meta.get("name")
+        kind = meta.get("kind")
+        path = meta.get("path")
+        li = QListWidgetItem()
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
+        self._set_item_widget(li, name, kind, path, meta)
 
     # --- automation root selection / persistence ---
     def _choose_automation_root(self):

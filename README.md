@@ -37,6 +37,13 @@ python app.py
 4. Comece a digitar no campo de busca; sugestões de `keywords` e `tests` aparecerão.
 5. Adicione itens à suite montada e clique em `Executar`.
 
+6. Antes de clicar em `Executar`, escolha a `Base de execução` no seletor disponível na tela principal. Opções suportadas:
+	- `SQL` (padrão)
+	- `SAP`
+	- `ORACLE`
+
+A variável selecionada será enviada ao Robot como `CURRENT_DB` (ex.: `-v CURRENT_DB:SQL`).
+
 Comportamento de execução:
 
 - Se a suite contiver `keywords`, a ferramenta cria uma suite temporária que inclui os `Resource` detectados automaticamente (arquivos onde as keywords estão definidas) e executa-a com `python -m robot` usando a raiz da automação como `working directory`.
