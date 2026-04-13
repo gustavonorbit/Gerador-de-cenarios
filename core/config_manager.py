@@ -49,3 +49,34 @@ class ConfigManager:
             cfg["automation_root_path"] = str(path)
         self._config = cfg
         self.save()
+
+    # --- favorites persistence ---
+    def get_favorites(self) -> list:
+        cfg = self.load()
+        favs = cfg.get("favorites")
+        if not isinstance(favs, list):
+            return []
+        return favs
+
+    def set_favorites(self, favorites: list) -> None:
+        cfg = self.load()
+        cfg["favorites"] = favorites
+        self._config = cfg
+        self.save()
+
+    def add_favorite(self, fav: dict) -> None:
+        favs = self.get_favorites()
+        # avoid duplicates by tuple (name,type,file)
+        key = (fav.get("name"), fav.get("type"), fav.get("file"))
+        for f in favs:
+            if (f.get("name"), f.get("type"), f.get("file")) == key:
+                return
+        favs.append({"name": fav.get("name"), "type": fav.get("type"), "file": fav.get("file")})
+        self.set_favorites(favs)
+
+    def remove_favorite(self, fav: dict) -> None:
+        favs = self.get_favorites()
+        key = (fav.get("name"), fav.get("type"), fav.get("file"))
+        new = [f for f in favs if (f.get("name"), f.get("type"), f.get("file")) != key]
+        if len(new) != len(favs):
+            self.set_favorites(new)

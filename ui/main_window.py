@@ -72,6 +72,11 @@ class MainWindow(QMainWindow):
             self._set_finder_and_index(self.automation_root)
         else:
             self.append_signal.emit("Nenhuma raiz de automação configurada. Selecione uma pasta para começar.")
+        # load favorites into UI
+        try:
+            self._refresh_favorites_ui()
+        except Exception:
+            pass
 
     def _setup_ui(self):
         central = QWidget()
@@ -107,6 +112,12 @@ class MainWindow(QMainWindow):
         self.suggestion_list.itemDoubleClicked.connect(self._on_suggestion_double)
         main_layout.addWidget(QLabel("Sugestões:"))
         main_layout.addWidget(self.suggestion_list)
+
+        # Favorites section
+        main_layout.addWidget(QLabel("Favoritos:"))
+        self.favorites_list = QListWidget()
+        self.favorites_list.itemDoubleClicked.connect(self._on_favorite_double)
+        main_layout.addWidget(self.favorites_list)
 
         # List of keywords (the assembled suite)
         self.kw_list = QListWidget()
@@ -164,6 +175,28 @@ class MainWindow(QMainWindow):
         self.kw_list.addItem(li)
         self._set_item_widget(li, name, kind, path, meta)
         self.keyword_edit.clear()
+
+    def _add_meta_to_suite(self, meta: dict) -> None:
+        if not meta:
+            return
+        if self.kw_list.count() >= self.MAX_SUITE_ITEMS:
+            self.console.append_text(f"Limite de {self.MAX_SUITE_ITEMS} itens atingido")
+            return
+        name = meta.get("name")
+        kind = meta.get("kind") or meta.get("type")
+        path = meta.get("path") or meta.get("file")
+        li = QListWidgetItem()
+        li.setData(Qt.UserRole, meta)
+        self.kw_list.addItem(li)
+        self._set_item_widget(li, name, kind, path, meta)
+
+    def _on_favorite_double(self, item: QListWidgetItem) -> None:
+        if not item:
+            return
+        meta = item.data(Qt.UserRole)
+        if not meta:
+            return
+        self._add_meta_to_suite(meta)
 
     def _open_execution_window(self):
         kws = [self.kw_list.item(i).text() for i in range(self.kw_list.count())]
@@ -271,6 +304,48 @@ class MainWindow(QMainWindow):
 
         self.kw_list.setItemWidget(list_item, widget)
 
+    def _refresh_favorites_ui(self):
+        # repopulate the favorites_list from config
+        try:
+            self.favorites_list.clear()
+            favs = self.config.get_favorites()
+            for f in favs:
+                name = f.get("name")
+                kind = f.get("type")
+                file = f.get("file")
+                meta = {"name": name, "kind": kind, "path": file}
+                it = QListWidgetItem()
+                it.setData(Qt.UserRole, meta)
+                self.favorites_list.addItem(it)
+                # set widget with filled star
+                self._set_favorite_widget(it, name, kind, file, meta)
+        except Exception:
+            pass
+
+    def _set_favorite_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
+        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(4, 2, 4, 2)
+        label = QLabel(f"{name} ({Path(path).name})")
+        layout.addWidget(label)
+
+        star_btn = QPushButton("★")
+        star_btn.setFixedWidth(28)
+
+        def _on_star():
+            fav = {"name": name, "type": kind, "file": path}
+            self.config.remove_favorite(fav)
+            self.append_signal.emit(f"Favorito removido: {name}")
+            self._refresh_favorites_ui()
+            # refresh suggestion stars
+            self._on_search_text_changed(self.keyword_edit.text())
+
+        star_btn.clicked.connect(_on_star)
+        layout.addWidget(star_btn)
+        self.favorites_list.setItemWidget(list_item, widget)
+
     # --- indexing and search handlers ---
     def _index_project(self):
         if not self.finder:
@@ -290,10 +365,11 @@ class MainWindow(QMainWindow):
             for name, kind in results:
                 files = self.finder.get_files_for(name, kind)
                 file_display = files[0] if files else ""
-                display = f"{name} [{kind}] ({Path(file_display).name})"
-                it = QListWidgetItem(display)
-                it.setData(Qt.UserRole, {"name": name, "kind": kind, "path": file_display})
+                meta = {"name": name, "kind": kind, "path": file_display}
+                it = QListWidgetItem()
+                it.setData(Qt.UserRole, meta)
                 self.suggestion_list.addItem(it)
+                self._set_suggestion_widget(it, name, kind, file_display, meta)
         except Exception:
             pass
 
@@ -313,6 +389,43 @@ class MainWindow(QMainWindow):
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
         self._set_item_widget(li, name, kind, path, meta)
+
+    def _set_suggestion_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
+        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(4, 2, 4, 2)
+
+        label = QLabel(f"{name} ({Path(path).name})")
+        layout.addWidget(label)
+
+        star_btn = QPushButton("☆")
+        star_btn.setFixedWidth(28)
+
+        def _refresh_star():
+            favs = self.config.get_favorites()
+            is_fav = any((f.get("name"), f.get("type"), f.get("file")) == (name, kind, path) for f in favs)
+            star_btn.setText("★" if is_fav else "☆")
+
+        def _on_star():
+            fav = {"name": name, "type": kind, "file": path}
+            favs = self.config.get_favorites()
+            exists = any((f.get("name"), f.get("type"), f.get("file")) == (name, kind, path) for f in favs)
+            if exists:
+                self.config.remove_favorite(fav)
+                self.append_signal.emit(f"Favorito removido: {name}")
+            else:
+                self.config.add_favorite(fav)
+                self.append_signal.emit(f"Favorito adicionado: {name}")
+            _refresh_star()
+            self._refresh_favorites_ui()
+
+        star_btn.clicked.connect(_on_star)
+        _refresh_star()
+        layout.addWidget(star_btn)
+
+        self.suggestion_list.setItemWidget(list_item, widget)
 
     # --- automation root selection / persistence ---
     def _choose_automation_root(self):
