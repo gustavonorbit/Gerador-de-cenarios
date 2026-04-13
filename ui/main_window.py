@@ -35,6 +35,7 @@ from core.robot_executor import RobotExecutor
 
 class MainWindow(QMainWindow):
     append_signal = Signal(str)
+    ui_signal = Signal(str)
     MAX_SUITE_ITEMS = 5
 
     def __init__(self, project_root: Optional[Path] = None):
@@ -62,6 +63,7 @@ class MainWindow(QMainWindow):
 
         # UI Widgets
         self.console = ConsolePanel()
+        self.ui_signal.connect(self._handle_ui_command)
         self.append_signal.connect(self._handle_output_line)
 
         self._setup_ui()
@@ -77,6 +79,7 @@ class MainWindow(QMainWindow):
             self._refresh_favorites_ui()
         except Exception:
             pass
+        self.current_executor = None
 
     def _setup_ui(self):
         central = QWidget()
@@ -90,9 +93,10 @@ class MainWindow(QMainWindow):
         self.select_root_btn = QPushButton("Selecionar raiz da automação")
         self.select_root_btn.clicked.connect(self._choose_automation_root)
         top_layout.addWidget(self.select_root_btn)
-        self.reindex_btn = QPushButton("Reindexar")
-        self.reindex_btn.clicked.connect(self._on_reindex_clicked)
-        top_layout.addWidget(self.reindex_btn)
+        # Favorites button (replaces Reindexar)
+        self.favorites_btn = QPushButton("Favoritos")
+        self.favorites_btn.clicked.connect(self._open_favorites)
+        top_layout.addWidget(self.favorites_btn)
         main_layout.addLayout(top_layout)
 
         # Search area for keywords
@@ -113,11 +117,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(QLabel("Sugestões:"))
         main_layout.addWidget(self.suggestion_list)
 
-        # Favorites section
-        main_layout.addWidget(QLabel("Favoritos:"))
-        self.favorites_list = QListWidget()
-        self.favorites_list.itemDoubleClicked.connect(self._on_favorite_double)
-        main_layout.addWidget(self.favorites_list)
+        # (Favorites moved to separate dialog) suggestions area expands
 
         # List of keywords (the assembled suite)
         self.kw_list = QListWidget()
@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
 
         # Execution controls
         exec_layout = QHBoxLayout()
-        self.show_ui_chk = QCheckBox("Mostrar tela da automação")
+        self.show_ui_chk = QCheckBox("Mostrar tela da automação (Web)")
         exec_layout.addWidget(self.show_ui_chk)
 
         # Execution DB selection
@@ -142,8 +142,12 @@ class MainWindow(QMainWindow):
         self.open_exec_btn.clicked.connect(self._open_execution_window)
         self.run_btn = QPushButton("Executar")
         self.run_btn.clicked.connect(self._on_execute_clicked)
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.clicked.connect(self._on_stop_clicked)
+        self.stop_btn.setVisible(False)
         exec_layout.addWidget(self.open_exec_btn)
         exec_layout.addWidget(self.run_btn)
+        exec_layout.addWidget(self.stop_btn)
         main_layout.addLayout(exec_layout)
 
         # Console
@@ -222,8 +226,9 @@ class MainWindow(QMainWindow):
             else:
                 file = meta.get("path")
                 test_map.setdefault(file, []).append(meta.get("name"))
-
         executor = RobotExecutor()
+        # keep reference so Stop can call executor.stop()
+        self.current_executor = executor
         params_common = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
 
         def _cb(line: str):
@@ -241,6 +246,11 @@ class MainWindow(QMainWindow):
                 except Exception:
                     current_db = "SQL"
                 self.append_signal.emit(f"Base de execução selecionada: {current_db}")
+                try:
+                    self.ui_signal.emit("execution_started")
+                except Exception:
+                    pass
+                self.append_signal.emit("Execução iniciada")
 
                 if keyword_items:
                     kws = [m["name"] for m in keyword_items]
@@ -264,11 +274,58 @@ class MainWindow(QMainWindow):
                     params["__tests__"] = tests
                     code = executor.run(file, params, _cb, working_dir=str(self.automation_root or self.app_root))
                     self.append_signal.emit(f"Execução {Path(file).name} finalizada com código: {code}")
+                    
             except Exception as e:
                 self.append_signal.emit(f"Falha na execução: {e}")
+            finally:
+                try:
+                    self.ui_signal.emit("execution_finished")
+                except Exception:
+                    pass
+                self.append_signal.emit("Execução finalizada")
+                try:
+                    self.current_executor = None
+                except Exception:
+                    pass
 
         t = threading.Thread(target=_run_all, daemon=True)
         t.start()
+
+    def _handle_ui_command(self, cmd: str):
+        try:
+            if cmd == "execution_started":
+                self.stop_btn.setVisible(True)
+                self.run_btn.setEnabled(False)
+                self.open_exec_btn.setEnabled(False)
+            elif cmd in ("execution_finished", "execution_stopped"):
+                self.stop_btn.setVisible(False)
+                self.stop_btn.setEnabled(True)
+                self.run_btn.setEnabled(True)
+                self.open_exec_btn.setEnabled(True)
+        except Exception:
+            pass
+
+    def _on_stop_clicked(self):
+        # disable stop button immediately
+        try:
+            self.stop_btn.setEnabled(False)
+            if self.current_executor:
+                self.current_executor.stop()
+            self.append_signal.emit("Execução interrompida pelo usuário.")
+            try:
+                self.ui_signal.emit("execution_stopped")
+            except Exception:
+                pass
+        except Exception as e:
+            self.append_signal.emit(f"Falha ao interromper execução: {e}")
+
+    def _open_favorites(self):
+        try:
+            from ui.favorites_dialog import FavoritesDialog
+            d = FavoritesDialog(self.config, parent=self)
+            d.exec()
+        except Exception as e:
+            self.append_signal.emit(f"Erro abrindo Favoritos: {e}")
 
     def _handle_output_line(self, line: str):
         self.console.append_text(line)
@@ -305,46 +362,12 @@ class MainWindow(QMainWindow):
         self.kw_list.setItemWidget(list_item, widget)
 
     def _refresh_favorites_ui(self):
-        # repopulate the favorites_list from config
+        # Favorites are shown in a separate dialog; refresh suggestion stars
         try:
-            self.favorites_list.clear()
-            favs = self.config.get_favorites()
-            for f in favs:
-                name = f.get("name")
-                kind = f.get("type")
-                file = f.get("file")
-                meta = {"name": name, "kind": kind, "path": file}
-                it = QListWidgetItem()
-                it.setData(Qt.UserRole, meta)
-                self.favorites_list.addItem(it)
-                # set widget with filled star
-                self._set_favorite_widget(it, name, kind, file, meta)
+            txt = self.keyword_edit.text() if hasattr(self, 'keyword_edit') else ''
+            self._on_search_text_changed(txt)
         except Exception:
             pass
-
-    def _set_favorite_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
-        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
-
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(4, 2, 4, 2)
-        label = QLabel(f"{name} ({Path(path).name})")
-        layout.addWidget(label)
-
-        star_btn = QPushButton("★")
-        star_btn.setFixedWidth(28)
-
-        def _on_star():
-            fav = {"name": name, "type": kind, "file": path}
-            self.config.remove_favorite(fav)
-            self.append_signal.emit(f"Favorito removido: {name}")
-            self._refresh_favorites_ui()
-            # refresh suggestion stars
-            self._on_search_text_changed(self.keyword_edit.text())
-
-        star_btn.clicked.connect(_on_star)
-        layout.addWidget(star_btn)
-        self.favorites_list.setItemWidget(list_item, widget)
 
     # --- indexing and search handlers ---
     def _index_project(self):
@@ -449,9 +472,4 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.append_signal.emit(f"Erro ao inicializar indexador: {e}")
 
-    def _on_reindex_clicked(self):
-        if not self.automation_root:
-            self.append_signal.emit("Nenhuma raiz configurada para reindexar")
-            return
-        threading.Thread(target=self._index_project, daemon=True).start()
 

@@ -21,6 +21,8 @@ from pathlib import Path
 class RobotExecutor:
     def __init__(self, robot_executable: str = "robot"):
         self.robot_executable = robot_executable
+        self._proc = None
+        self._proc_lock = __import__('threading').Lock()
 
     def _build_command(self, runner_path: str, params: Dict[str, Any]) -> List[str]:
         # Use python -m robot to ensure execution via the current interpreter
@@ -59,25 +61,45 @@ class RobotExecutor:
             cwd = str(Path(working_dir))
 
         # Start the process; set working directory so relative resources are resolved
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-            cwd=cwd,
-        )
+        proc = None
+        with self._proc_lock:
+            self._proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+                cwd=cwd,
+            )
+            proc = self._proc
 
         # Stream stdout line by line
-        if proc.stdout is not None:
-            for raw_line in proc.stdout:
-                line = raw_line.rstrip("\n")
-                try:
-                    callback_output(line)
-                except Exception:
-                    # Swallow callback exceptions to avoid stopping the run
-                    pass
-
-        proc.wait()
-        return proc.returncode
+        try:
+            if proc.stdout is not None:
+                for raw_line in proc.stdout:
+                    line = raw_line.rstrip("\n")
+                    try:
+                        callback_output(line)
+                    except Exception:
+                        pass
+            proc.wait()
+            return proc.returncode
+        finally:
+            with self._proc_lock:
+                self._proc = None
+    def stop(self) -> None:
+        """Attempt to terminate the running Robot process."""
+        with self._proc_lock:
+            p = self._proc
+        if not p:
+            return
+        try:
+            p.terminate()
+            # wait a short while
+            p.wait(timeout=3)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
 
