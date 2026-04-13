@@ -7,7 +7,7 @@ Behavior changes:
 - Removes manual repository/resource settings.
 """
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
 import threading
 
 from PySide6.QtWidgets import (
@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QCheckBox,
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
+from PySide6.QtWidgets import QFileDialog, QListWidgetItem
 
 from core.config_manager import ConfigManager
 from core.keyword_finder import KeywordFinder
@@ -39,17 +40,24 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Robot Scenario Runner")
 
-        # Determine project root automatically: two levels up from this file
-        if project_root is None:
-            # main_window.py is in ui/; project root is parent of ui/
-            self.project_root = Path(__file__).resolve().parent.parent
+        # application root (where this tool lives) — config.json stored here
+        self.app_root = Path(__file__).resolve().parent.parent
+        self.config = ConfigManager(self.app_root)
+
+        # automation_root is chosen by the user (persisted)
+        saved = self.config.get_automation_root_path()
+        if saved:
+            saved_p = Path(saved)
+            if saved_p.exists():
+                self.automation_root: Optional[Path] = saved_p.resolve()
+            else:
+                self.automation_root = None
+                # notify user via console after UI set up
         else:
-            self.project_root = Path(project_root).resolve()
+            self.automation_root = None
 
-        self.config = ConfigManager(self.project_root)
-
-        # Keyword finder indexes robot files automatically
-        self.finder = KeywordFinder(self.project_root)
+        # Keyword finder will be instantiated when an automation root is present
+        self.finder: Optional[KeywordFinder] = None
 
         # UI Widgets
         self.console = ConsolePanel()
@@ -57,11 +65,12 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
 
-        # Start indexing in background
-        self.append_signal.emit(f"Raiz do projeto detectada automaticamente: {self.project_root}")
-        self.append_signal.emit("Iniciando indexação do projeto...")
-        t = threading.Thread(target=self._index_project, daemon=True)
-        t.start()
+        # If we have a saved automation root, initialize finder and index
+        if self.automation_root:
+            self.append_signal.emit(f"Raiz da automação carregada: {self.automation_root}")
+            self._set_finder_and_index(self.automation_root)
+        else:
+            self.append_signal.emit("Nenhuma raiz de automação configurada. Selecione uma pasta para começar.")
 
     def _setup_ui(self):
         central = QWidget()
@@ -69,11 +78,14 @@ class MainWindow(QMainWindow):
 
         # Top info
         top_layout = QHBoxLayout()
-        self.root_label = QLabel(f"Raiz: {self.project_root}")
+        self.root_label = QLabel("Raiz ativa: (nenhuma)")
         top_layout.addWidget(self.root_label)
         top_layout.addStretch()
+        self.select_root_btn = QPushButton("Selecionar raiz da automação")
+        self.select_root_btn.clicked.connect(self._choose_automation_root)
+        top_layout.addWidget(self.select_root_btn)
         self.reindex_btn = QPushButton("Reindexar")
-        self.reindex_btn.clicked.connect(lambda: threading.Thread(target=self._index_project, daemon=True).start())
+        self.reindex_btn.clicked.connect(self._on_reindex_clicked)
         top_layout.addWidget(self.reindex_btn)
         main_layout.addLayout(top_layout)
 
@@ -129,13 +141,18 @@ class MainWindow(QMainWindow):
         if not item:
             self.console.append_text("Nenhuma sugestão selecionada")
             return
-        text = item.text().split(' — ')[0].strip()
-        if not text:
+        meta = item.data(Qt.UserRole)
+        if not meta:
             return
-        if self.kw_list.count() >= 5:
-            self.console.append_text("Limite de 5 keywords atingido")
+        name = meta.get("name")
+        kind = meta.get("kind")
+        path = meta.get("path")
+        if self.kw_list.count() >= 50:
+            self.console.append_text("Limite de 50 itens atingido")
             return
-        self.kw_list.addItem(text)
+        li = QListWidgetItem(f"{name} [{kind}] ({Path(path).name})")
+        li.setData(Qt.UserRole, meta)
+        self.kw_list.addItem(li)
         self.keyword_edit.clear()
 
     def _open_execution_window(self):
@@ -149,48 +166,55 @@ class MainWindow(QMainWindow):
         if self.kw_list.count() == 0:
             self.console.append_text("Erro: nenhuma keyword adicionada à suite.")
             return
+        # collect items from kw_list (they contain meta in UserRole)
+        keyword_items = []
+        test_map: Dict[str, List[str]] = {}
+        for i in range(self.kw_list.count()):
+            item = self.kw_list.item(i)
+            meta = item.data(Qt.UserRole)
+            if not meta:
+                continue
+            if meta.get("kind") == "keyword":
+                keyword_items.append(meta)
+            else:
+                file = meta.get("path")
+                test_map.setdefault(file, []).append(meta.get("name"))
 
-        kws = [self.kw_list.item(i).text() for i in range(self.kw_list.count())]
+        executor = RobotExecutor()
+        params_common = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
 
-        # Determine resource files automatically from index
-        resource_files = []
-        for k in kws:
-            files = self.finder.get_files_for_keyword(k)
-            for f in files:
-                if f not in resource_files:
-                    resource_files.append(f)
-
-        try:
-            temp_path = build_temp_suite(kws, repo_root=self.project_root, resource_paths=resource_files if resource_files else None)
-            self.append_signal.emit("Iniciando execução...")
-            self.append_signal.emit(f"Raiz do projeto: {self.project_root}")
-            show_ui_state = self.show_ui_chk.isChecked()
-            self.append_signal.emit(f"Mostrar tela: {'ativado' if show_ui_state else 'desativado'}")
-            self.append_signal.emit(f"Suite temporária gerada: {temp_path}")
-        except Exception as e:
-            self.append_signal.emit(f"Erro ao gerar suite temporária: {e}")
-            return
-
-        def _run_real():
-            executor = RobotExecutor()
-            params = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
-
-            def _cb(line: str):
-                try:
-                    self.append_signal.emit(line)
-                except Exception:
-                    pass
-
+        def _cb(line: str):
             try:
-                code = executor.run(temp_path, params, _cb, working_dir=str(self.project_root))
-                if code == 0:
-                    self.append_signal.emit("Execução finalizada com sucesso")
-                else:
-                    self.append_signal.emit(f"Execução finalizada com código de saída: {code}")
+                self.append_signal.emit(line)
+            except Exception:
+                pass
+
+        def _run_all():
+            # run keywords (single temp suite) if present
+            try:
+                if keyword_items:
+                    kws = [m["name"] for m in keyword_items]
+                    resource_files = []
+                    for m in keyword_items:
+                        f = m.get("path")
+                        if f and f not in resource_files:
+                            resource_files.append(f)
+                    temp_path = build_temp_suite(kws, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
+                    self.append_signal.emit("Iniciando execução (keywords)...")
+                    code = executor.run(temp_path, dict(params_common), _cb, working_dir=str(self.automation_root or self.app_root))
+                    self.append_signal.emit(f"Execução keywords finalizada com código: {code}")
+
+                # run tests grouped by file
+                for file, tests in test_map.items():
+                    self.append_signal.emit(f"Iniciando execução de testes em: {file}")
+                    params = dict(params_common)
+                    params["__tests__"] = tests
+                    code = executor.run(file, params, _cb, working_dir=str(self.automation_root or self.app_root))
+                    self.append_signal.emit(f"Execução {Path(file).name} finalizada com código: {code}")
             except Exception as e:
                 self.append_signal.emit(f"Falha na execução: {e}")
 
-        t = threading.Thread(target=_run_real, daemon=True)
+        t = threading.Thread(target=_run_all, daemon=True)
         t.start()
 
     def _handle_output_line(self, line: str):
@@ -198,32 +222,68 @@ class MainWindow(QMainWindow):
 
     # --- indexing and search handlers ---
     def _index_project(self):
+        if not self.finder:
+            return
         try:
-            count = self.finder.index()
-            self.append_signal.emit(f"Projeto indexado com sucesso. {count} keywords encontradas.")
+            k_count, t_count = self.finder.index()
+            self.append_signal.emit(f"Projeto indexado com sucesso. {k_count} keywords e {t_count} testes encontrados.")
         except Exception as e:
             self.append_signal.emit(f"Erro na indexação: {e}")
 
     def _on_search_text_changed(self, text: str):
         try:
-            results = self.finder.search(text)
             self.suggestion_list.clear()
-            for r in results:
-                files = self.finder.get_files_for_keyword(r)
+            if not self.finder:
+                return
+            results = self.finder.search(text)
+            for name, kind in results:
+                files = self.finder.get_files_for(name, kind)
                 file_display = files[0] if files else ""
-                self.suggestion_list.addItem(f"{r} — {Path(file_display).name}")
+                display = f"{name} [{kind}] ({Path(file_display).name})"
+                it = QListWidgetItem(display)
+                it.setData(Qt.UserRole, {"name": name, "kind": kind, "path": file_display})
+                self.suggestion_list.addItem(it)
         except Exception:
-            # on search errors, keep UI usable
             pass
 
     def _on_suggestion_double(self, item):
         if not item:
             return
-        text = item.text().split(' — ')[0].strip()
-        if not text:
+        meta = item.data(Qt.UserRole)
+        if not meta:
             return
-        if self.kw_list.count() >= 5:
-            self.console.append_text("Limite de 5 keywords atingido")
+        if self.kw_list.count() >= 50:
+            self.console.append_text("Limite de 50 itens atingido")
             return
-        self.kw_list.addItem(text)
+        li = QListWidgetItem(item.text())
+        li.setData(Qt.UserRole, meta)
+        self.kw_list.addItem(li)
+
+    # --- automation root selection / persistence ---
+    def _choose_automation_root(self):
+        selected = QFileDialog.getExistingDirectory(self, "Selecionar raiz da automação")
+        if not selected:
+            return
+        p = Path(selected).resolve()
+        if not p.exists():
+            self.append_signal.emit(f"Caminho selecionado não existe: {p}")
+            return
+        self.config.set_automation_root_path(str(p))
+        self.automation_root = p
+        self.append_signal.emit(f"Raiz da automação carregada: {p}")
+        self._set_finder_and_index(p)
+
+    def _set_finder_and_index(self, root: Path):
+        try:
+            self.finder = KeywordFinder(root)
+            self.root_label.setText(f"Raiz ativa: {root}")
+            threading.Thread(target=self._index_project, daemon=True).start()
+        except Exception as e:
+            self.append_signal.emit(f"Erro ao inicializar indexador: {e}")
+
+    def _on_reindex_clicked(self):
+        if not self.automation_root:
+            self.append_signal.emit("Nenhuma raiz configurada para reindexar")
+            return
+        threading.Thread(target=self._index_project, daemon=True).start()
 

@@ -1,46 +1,51 @@
-
 # Robot Scenario Runner
 
-Ferramenta desktop para montar e executar suites Robot Framework com experiência simplificada
-e pronta para uso real.
+Ferramenta desktop para montar e executar suites Robot Framework com experiência simples e pronta para uso.
 
-Principais mudanças na arquitetura:
+Resumo da nova arquitetura:
 
-- A raiz do projeto é detectada automaticamente: é a pasta onde a aplicação está localizada/executada.
-- Não há mais seleção manual de `repository_path` ou `base_resource_path` — tudo é resolvido automaticamente.
-- Ao abrir a aplicação, os arquivos `*.robot` e `*.resource` são indexados automaticamente (ignorando `.git`, `venv`, `__pycache__`, `node_modules`, etc.).
-- O usuário apenas começa a digitar keywords; a ferramenta sugere correspondências e monta a suite automaticamente.
-- A execução usa a raiz do projeto como `working directory`.
+- O usuário seleciona a `raiz da automação` (pasta do projeto Robot) via um botão na UI.
+- A pasta selecionada é salva automaticamente e reutilizada na próxima vez que a aplicação for aberta (se ainda existir).
+- A aplicação indexa recursivamente `*.robot` e `*.resource` dentro da raiz selecionada, ignorando diretórios comuns como `.git`, `venv`, `__pycache__`, `node_modules`, `dist`, `build`, `.idea`, `.vscode`.
+- A busca unificada sugere `keywords` e `tests` encontrados no índice.
+- A execução utiliza o `working directory` igual à raiz da automação selecionada.
 
-Estrutura do projeto (resumido):
+Principais componentes:
 
 - `app.py`: ponto de entrada.
-- `ui/`: interface gráfica (janela principal, console, tela de execução).
-- `core/`: lógica de indexação, geração de suites e execução Robot.
+- `ui/main_window.py`: interface principal — seleção de raiz, busca, sugestões, montagem da suite e execução.
+- `core/keyword_finder.py`: indexador que mapeia keywords e testes para os arquivos onde estão definidos.
+- `core/suite_builder.py`: gera suites temporárias para execução de keywords (inclui automa­ticamente os Resources detectados).
+- `core/robot_executor.py`: executa Robot Framework (`python -m robot`) e encaminha logs para a UI.
+- `core/config_manager.py`: armazena a `automation_root_path` em `config.json` na pasta da aplicação.
 
 Requisitos:
 
 - Python 3.11+
-- Ver `requirements.txt`
+- Dependências listadas em `requirements.txt` (PySide6, Robot Framework, etc.)
 
 Uso:
 
-1. Coloque esta ferramenta dentro da raiz do seu projeto de automação Robot (a mesma pasta que contém suas pastas `robot/`, `tests_robot/`, etc.) ou execute-a a partir dessa pasta.
-2. Abra a aplicação com `python app.py`.
-3. A aplicação irá detectar automaticamente a raiz do projeto e indexar os arquivos Robot.
-4. Comece a digitar keywords no campo de busca — sugestões aparecerão automaticamente.
-5. Adicione até 5 keywords à suite montada e clique em `Executar`.
+1. Execute a aplicação com:
+
+```bash
+python app.py
+```
+
+2. Na tela principal clique em `Selecionar raiz da automação` e escolha a pasta do seu projeto Robot.
+3. A aplicação salvará esse caminho e indexará automaticamente os arquivos do projeto.
+4. Comece a digitar no campo de busca; sugestões de `keywords` e `tests` aparecerão.
+5. Adicione itens à suite montada e clique em `Executar`.
 
 Comportamento de execução:
 
-- A ferramenta localiza automaticamente em quais arquivos as keywords estão definidas e inclui os `Resource` correspondentes na suite temporária.
-- A suite temporária é gerada e executada com `python -m robot` usando a raiz do projeto como diretório de trabalho.
-- Logs são exibidos no painel de console da aplicação (erros de indexação/execução não quebram a UI).
+- Se a suite contiver `keywords`, a ferramenta cria uma suite temporária que inclui os `Resource` detectados automaticamente (arquivos onde as keywords estão definidas) e executa-a com `python -m robot` usando a raiz da automação como `working directory`.
+- Se a suite contiver `tests`, a ferramenta executa os testes por arquivo agrupando múltiplos `--test` por arquivo quando aplicável.
+- Logs de indexação e execução aparecem no painel de console da aplicação; erros não quebram a UI.
 
 Observações:
 
-- Limite de 5 keywords por execução.
-- Se ocorrerem erros durante a indexação, a aplicação os reportará no console e continuará funcional.
-- Não é mais necessário configurar manualmente caminhos para resources ou repositório.
-
+- A aplicação salva a última `raiz da automação` selecionada em `config.json` na pasta da ferramenta.
+- Se o caminho salvo não existir ao iniciar a aplicação, será solicitado ao usuário selecionar uma nova pasta.
+- Limites e heurísticas de indexação podem ser ajustados em `core/keyword_finder.py`.
 

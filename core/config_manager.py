@@ -32,3 +32,20 @@ class ConfigManager:
 
     # Note: repository/base resource paths are no longer managed here.
     # This class keeps a generic config file for other unrelated preferences.
+
+    # --- automation root persistence ---
+    def get_automation_root_path(self) -> str | None:
+        cfg = self.load()
+        val = cfg.get("automation_root_path")
+        if val:
+            return str(val)
+        return None
+
+    def set_automation_root_path(self, path: str | None) -> None:
+        cfg = self.load()
+        if path is None:
+            cfg.pop("automation_root_path", None)
+        else:
+            cfg["automation_root_path"] = str(path)
+        self._config = cfg
+        self.save()

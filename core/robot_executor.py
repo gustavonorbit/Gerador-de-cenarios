@@ -29,6 +29,11 @@ class RobotExecutor:
         for k, v in (params or {}).items():
             # Robot variable format: -v name:value
             cmd.extend(["-v", f"{k}:{v}"])
+        # Add tests selectors if provided in params_tests
+        tests = params.pop("__tests__", None)
+        if tests:
+            for t in tests:
+                cmd.extend(["-t", str(t)])
         # Runner path last
         cmd.append(str(runner_path))
         return cmd
@@ -42,7 +47,9 @@ class RobotExecutor:
 
         Returns the process exit code.
         """
-        cmd = self._build_command(runner_path, params)
+        # Copy params to avoid mutating caller's dict
+        params_copy = dict(params or {})
+        cmd = self._build_command(runner_path, params_copy)
 
         cwd = None
         if working_dir:
