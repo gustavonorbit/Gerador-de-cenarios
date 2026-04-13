@@ -1,21 +1,22 @@
+
 # Robot Scenario Runner
 
-Ferramenta desktop simples para executar runners Robot Framework através de uma interface gráfica.
+Ferramenta desktop para montar e executar suites Robot Framework com experiência simplificada
+e pronta para uso real.
 
-Como funciona (V1 - manual):
+Principais mudanças na arquitetura:
 
-- Esta versão remove a detecção automática de runners e argumentos.
-- O usuário monta manualmente uma suite digitando até 5 keywords.
-- Configure o caminho do repositório onde estão as automações Robot via `Configurações`.
-- Clique em `Executar` para simular a execução e ver logs no console.
+- A raiz do projeto é detectada automaticamente: é a pasta onde a aplicação está localizada/executada.
+- Não há mais seleção manual de `repository_path` ou `base_resource_path` — tudo é resolvido automaticamente.
+- Ao abrir a aplicação, os arquivos `*.robot` e `*.resource` são indexados automaticamente (ignorando `.git`, `venv`, `__pycache__`, `node_modules`, etc.).
+- O usuário apenas começa a digitar keywords; a ferramenta sugere correspondências e monta a suite automaticamente.
+- A execução usa a raiz do projeto como `working directory`.
 
-Estrutura do projeto:
+Estrutura do projeto (resumido):
 
-- `app.py`: Ponto de entrada do aplicativo.
-- `ui/`: Widgets da interface (janela principal, formulário dinâmico, console).
-- `core/`: Lógica central (carregador de runners, parser de argumentos, executor robot, parser de resultados).
-- `robot/runners/`: Local para armazenar runners Robot Framework (.robot).
-- `output/logs/`: Local para saídas e logs de execução.
+- `app.py`: ponto de entrada.
+- `ui/`: interface gráfica (janela principal, console, tela de execução).
+- `core/`: lógica de indexação, geração de suites e execução Robot.
 
 Requisitos:
 
@@ -24,25 +25,22 @@ Requisitos:
 
 Uso:
 
-1. Abra a aplicação com `python app.py`.
-2. Clique em `Configurações` e informe o caminho do repositório onde estão as automações.
-3. Na tela principal digite uma `keyword` e clique em `Adicionar keyword` (máx 5).
-4. Quando tiver ao menos uma keyword, clique em `Executar` para gerar uma suite temporária e executá-la com o Robot Framework.
+1. Coloque esta ferramenta dentro da raiz do seu projeto de automação Robot (a mesma pasta que contém suas pastas `robot/`, `tests_robot/`, etc.) ou execute-a a partir dessa pasta.
+2. Abra a aplicação com `python app.py`.
+3. A aplicação irá detectar automaticamente a raiz do projeto e indexar os arquivos Robot.
+4. Comece a digitar keywords no campo de busca — sugestões aparecerão automaticamente.
+5. Adicione até 5 keywords à suite montada e clique em `Executar`.
+
+Comportamento de execução:
+
+- A ferramenta localiza automaticamente em quais arquivos as keywords estão definidas e inclui os `Resource` correspondentes na suite temporária.
+- A suite temporária é gerada e executada com `python -m robot` usando a raiz do projeto como diretório de trabalho.
+- Logs são exibidos no painel de console da aplicação (erros de indexação/execução não quebram a UI).
 
 Observações:
 
-
-- Limite de 5 keywords na suite.
-- As keywords adicionadas aparecem na lista "Suite montada".
- - A execução gera uma suite temporária (.robot) com as keywords adicionadas (até 5) e a executa de fato com o Robot Framework.
- - A execução é realizada com o comando `python -m robot` e não gera `output`, `log` nem `report` (usamos `--output NONE --log NONE --report NONE`).
- - A opção "Mostrar tela da automação" envia a variável Robot `SHOW_UI` como `True`/`False` para a suite; suas automações podem usar essa variável para controlar headless/visible.
- - A execução ocorre com o diretório de trabalho configurado como o repositório informado em `Configurações`, garantindo que recursos relativos sejam acessíveis.
- - A execução gera uma suite temporária (.robot) com as keywords adicionadas (até 5) e a executa de fato com o Robot Framework.
- - Você pode configurar um `Resource base do Robot` nas Configurações. Se informado, a suite temporária incluirá este resource para que as keywords definidas no seu projeto sejam encontradas.
- - O `Resource base` pode ser um caminho absoluto ou relativo ao `repository_path`. Se o arquivo não existir, a execução será bloqueada e o erro exibido no console.
- - A execução é realizada com o comando `python -m robot` e não gera `output`, `log` nem `report` (usamos `--output NONE --log NONE --report NONE`).
- - A opção "Mostrar tela da automação" envia a variável Robot `SHOW_UI` como `True`/`False` para a suite; suas automações podem usar essa variável para controlar headless/visible.
- - A execução ocorre com o diretório de trabalho configurado como o repositório informado em `Configurações`, garantindo que recursos relativos sejam acessíveis.
+- Limite de 5 keywords por execução.
+- Se ocorrerem erros durante a indexação, a aplicação os reportará no console e continuará funcional.
+- Não é mais necessário configurar manualmente caminhos para resources ou repositório.
 
 

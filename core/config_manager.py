@@ -30,22 +30,5 @@ class ConfigManager:
         except Exception:
             pass
 
-    def get_repository_path(self) -> str | None:
-        cfg = self.load()
-        return cfg.get("repository_path")
-
-    def set_base_resource_path(self, path: str) -> None:
-        cfg = self.load()
-        cfg["base_resource_path"] = path
-        self._config = cfg
-        self.save()
-
-    def get_base_resource_path(self) -> str | None:
-        cfg = self.load()
-        return cfg.get("base_resource_path")
-
-    def set_repository_path(self, path: str) -> None:
-        cfg = self.load()
-        cfg["repository_path"] = path
-        self._config = cfg
-        self.save()
+    # Note: repository/base resource paths are no longer managed here.
+    # This class keeps a generic config file for other unrelated preferences.

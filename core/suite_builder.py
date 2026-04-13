@@ -3,31 +3,40 @@ import tempfile
 from pathlib import Path
 
 
-def build_temp_suite(keywords: List[str], repo_root: Optional[str] = None, resource_path: Optional[str] = None) -> str:
+def _to_resource_entry(repo_root: Path, path_str: str) -> str:
+    p = Path(path_str)
+    if not p.is_absolute():
+        # assume relative path already
+        return str(p).replace("\\", "/")
+    try:
+        rel = p.relative_to(repo_root)
+        return str(rel).replace("\\", "/")
+    except Exception:
+        return str(p)
+
+
+def build_temp_suite(keywords: List[str], repo_root: Path, resource_paths: Optional[List[str]] = None) -> str:
     """Generate a temporary .robot suite from a list of keywords.
 
+    - Uses the project `repo_root` as base for Resource relative paths.
+    - Accepts `resource_paths` as a list of files that should be included as Resource entries.
+    - If no resources are provided, falls back to `tests_robot/keywords.robot`.
     - Supports up to 5 keywords (keeps order).
-    - If `resource_path` is provided, include it as `Resource` in settings.
-      If the resource file is inside `repo_root`, use a relative path.
-    - Saves to a secure temporary file and returns its path.
     """
     kws = keywords[:5]
 
     lines = ["*** Settings ***", "Library    BuiltIn"]
-    # determine resource entry
-    if resource_path:
-        rp = Path(resource_path)
-        if repo_root:
+
+    if resource_paths:
+        for rp in resource_paths:
             try:
-                rel = Path(resource_path).relative_to(Path(repo_root))
-                resource_entry = str(rel).replace("\\", "/")
+                entry = _to_resource_entry(Path(repo_root), rp)
+                lines.append(f"Resource    {entry}")
             except Exception:
-                resource_entry = str(rp)
-        else:
-            resource_entry = str(rp)
-        lines.append(f"Resource    {resource_entry}")
+                # best-effort include
+                lines.append(f"Resource    {rp}")
     else:
-        # default fallback to tests_robot/keywords.robot if exists in repo
+        # default fallback
         lines.append("Resource    tests_robot/keywords.robot")
 
     lines.append("")

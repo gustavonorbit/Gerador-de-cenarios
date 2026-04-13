@@ -1,13 +1,14 @@
-"""
-Simplified Main Window for manual suite assembly (V1)
+"""Main window refactored for automatic project root detection,
+indexing and keyword search.
 
-This version removes automatic detection of runners/arguments and provides
-an interface for the user to type keywords manually and build a small suite.
+Behavior changes:
+- Detects project root automatically (where the app is located).
+- Indexes .robot and .resource files on startup.
+- Removes manual repository/resource settings.
 """
 from pathlib import Path
 from typing import Optional
 import threading
-import time
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -24,8 +25,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal
 
 from core.config_manager import ConfigManager
+from core.keyword_finder import KeywordFinder
 from ui.console_panel import ConsolePanel
-from ui.settings_dialog import SettingsDialog
 from ui.execution_window import ExecutionWindow
 from core.suite_builder import build_temp_suite
 from core.robot_executor import RobotExecutor
@@ -36,10 +37,19 @@ class MainWindow(QMainWindow):
 
     def __init__(self, project_root: Optional[Path] = None):
         super().__init__()
-        self.setWindowTitle("Robot Scenario Runner - V1 Manual Suite")
+        self.setWindowTitle("Robot Scenario Runner")
 
-        self.project_root = Path(project_root) if project_root else Path.cwd()
+        # Determine project root automatically: two levels up from this file
+        if project_root is None:
+            # main_window.py is in ui/; project root is parent of ui/
+            self.project_root = Path(__file__).resolve().parent.parent
+        else:
+            self.project_root = Path(project_root).resolve()
+
         self.config = ConfigManager(self.project_root)
+
+        # Keyword finder indexes robot files automatically
+        self.finder = KeywordFinder(self.project_root)
 
         # UI Widgets
         self.console = ConsolePanel()
@@ -47,29 +57,45 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
 
+        # Start indexing in background
+        self.append_signal.emit(f"Raiz do projeto detectada automaticamente: {self.project_root}")
+        self.append_signal.emit("Iniciando indexação do projeto...")
+        t = threading.Thread(target=self._index_project, daemon=True)
+        t.start()
+
     def _setup_ui(self):
         central = QWidget()
         main_layout = QVBoxLayout(central)
 
-        # Top: settings button
+        # Top info
         top_layout = QHBoxLayout()
-        self.settings_btn = QPushButton("Configurações")
-        self.settings_btn.clicked.connect(self._open_settings)
-        top_layout.addWidget(self.settings_btn)
+        self.root_label = QLabel(f"Raiz: {self.project_root}")
+        top_layout.addWidget(self.root_label)
         top_layout.addStretch()
+        self.reindex_btn = QPushButton("Reindexar")
+        self.reindex_btn.clicked.connect(lambda: threading.Thread(target=self._index_project, daemon=True).start())
+        top_layout.addWidget(self.reindex_btn)
         main_layout.addLayout(top_layout)
 
-        # Manual suite assembly area
-        main_layout.addWidget(QLabel("Adicionar keyword manualmente (máx 5):"))
+        # Search area for keywords
+        main_layout.addWidget(QLabel("Buscar keyword:"))
         kw_layout = QHBoxLayout()
         self.keyword_edit = QLineEdit()
-        self.add_kw_btn = QPushButton("Adicionar keyword")
-        self.add_kw_btn.clicked.connect(self._on_add_keyword)
+        self.keyword_edit.setPlaceholderText("Digite para buscar keywords...")
+        self.keyword_edit.textChanged.connect(self._on_search_text_changed)
+        self.add_kw_btn = QPushButton("Adicionar selecionada")
+        self.add_kw_btn.clicked.connect(self._on_add_selected_suggestion)
         kw_layout.addWidget(self.keyword_edit)
         kw_layout.addWidget(self.add_kw_btn)
         main_layout.addLayout(kw_layout)
 
-        # List of keywords
+        # Suggestions list
+        self.suggestion_list = QListWidget()
+        self.suggestion_list.itemDoubleClicked.connect(self._on_suggestion_double)
+        main_layout.addWidget(QLabel("Sugestões:"))
+        main_layout.addWidget(self.suggestion_list)
+
+        # List of keywords (the assembled suite)
         self.kw_list = QListWidget()
         self.kw_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         main_layout.addWidget(QLabel("Suite montada:"))
@@ -95,13 +121,16 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _open_settings(self):
-        dlg = SettingsDialog(self.config, parent=self)
-        dlg.exec()
+        # settings dialog removed - no manual path configuration
+        self.console.append_text("Tela de Configurações removida: caminhos são detectados automaticamente")
 
-    def _on_add_keyword(self):
-        text = self.keyword_edit.text().strip()
+    def _on_add_selected_suggestion(self):
+        item = self.suggestion_list.currentItem()
+        if not item:
+            self.console.append_text("Nenhuma sugestão selecionada")
+            return
+        text = item.text().split(' — ')[0].strip()
         if not text:
-            self.console.append_text("Não é possível adicionar keyword vazia")
             return
         if self.kw_list.count() >= 5:
             self.console.append_text("Limite de 5 keywords atingido")
@@ -117,60 +146,24 @@ class MainWindow(QMainWindow):
         win.exec()
 
     def _on_execute_clicked(self):
-        repo = self.config.get_repository_path()
-        if not repo:
-            self.console.append_text("Erro: caminho do repositório não configurado. Abra Configurações.")
-            return
         if self.kw_list.count() == 0:
             self.console.append_text("Erro: nenhuma keyword adicionada à suite.")
             return
-        # Gather keywords
+
         kws = [self.kw_list.item(i).text() for i in range(self.kw_list.count())]
 
-        # Build temporary suite (include base resource if configured)
-        base_res = self.config.get_base_resource_path()
-        resource_arg = None
-        if base_res:
-            repo_path = Path(repo).resolve()
-            base_cfg = base_res.strip()
-            base_p = Path(base_cfg)
-
-            # If relative path provided, normalize against repo and avoid duplicated repo folder
-            if not base_p.is_absolute():
-                parts = base_p.parts
-                if parts and parts[0] == repo_path.name:
-                    # remove the duplicated leading folder name
-                    if len(parts) > 1:
-                        base_p = Path(*parts[1:])
-                    else:
-                        base_p = Path('.')
-                abs_path = (repo_path / base_p).resolve()
-                if not abs_path.exists():
-                    self.console.append_text(f"Erro: resource base não encontrado: {abs_path}")
-                    return
-                # use relative path to repo for Resource entry
-                try:
-                    rel = abs_path.relative_to(repo_path)
-                    resource_arg = str(rel).replace('\\', '/')
-                except Exception:
-                    resource_arg = str(base_p).replace('\\', '/')
-            else:
-                # absolute path provided
-                abs_path = base_p.resolve()
-                if repo_path in abs_path.parents or abs_path == repo_path:
-                    # convert to relative if inside repo
-                    try:
-                        rel = abs_path.relative_to(repo_path)
-                        resource_arg = str(rel).replace('\\', '/')
-                    except Exception:
-                        resource_arg = str(abs_path)
-                else:
-                    resource_arg = str(abs_path)
+        # Determine resource files automatically from index
+        resource_files = []
+        for k in kws:
+            files = self.finder.get_files_for_keyword(k)
+            for f in files:
+                if f not in resource_files:
+                    resource_files.append(f)
 
         try:
-            temp_path = build_temp_suite(kws, repo_root=repo, resource_path=resource_arg)
+            temp_path = build_temp_suite(kws, repo_root=self.project_root, resource_paths=resource_files if resource_files else None)
             self.append_signal.emit("Iniciando execução...")
-            self.append_signal.emit(f"Repositório: {repo}")
+            self.append_signal.emit(f"Raiz do projeto: {self.project_root}")
             show_ui_state = self.show_ui_chk.isChecked()
             self.append_signal.emit(f"Mostrar tela: {'ativado' if show_ui_state else 'desativado'}")
             self.append_signal.emit(f"Suite temporária gerada: {temp_path}")
@@ -183,14 +176,13 @@ class MainWindow(QMainWindow):
             params = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
 
             def _cb(line: str):
-                # Forward Robot stdout lines to UI console
                 try:
                     self.append_signal.emit(line)
                 except Exception:
                     pass
 
             try:
-                code = executor.run(temp_path, params, _cb, working_dir=repo)
+                code = executor.run(temp_path, params, _cb, working_dir=str(self.project_root))
                 if code == 0:
                     self.append_signal.emit("Execução finalizada com sucesso")
                 else:
@@ -203,4 +195,35 @@ class MainWindow(QMainWindow):
 
     def _handle_output_line(self, line: str):
         self.console.append_text(line)
+
+    # --- indexing and search handlers ---
+    def _index_project(self):
+        try:
+            count = self.finder.index()
+            self.append_signal.emit(f"Projeto indexado com sucesso. {count} keywords encontradas.")
+        except Exception as e:
+            self.append_signal.emit(f"Erro na indexação: {e}")
+
+    def _on_search_text_changed(self, text: str):
+        try:
+            results = self.finder.search(text)
+            self.suggestion_list.clear()
+            for r in results:
+                files = self.finder.get_files_for_keyword(r)
+                file_display = files[0] if files else ""
+                self.suggestion_list.addItem(f"{r} — {Path(file_display).name}")
+        except Exception:
+            # on search errors, keep UI usable
+            pass
+
+    def _on_suggestion_double(self, item):
+        if not item:
+            return
+        text = item.text().split(' — ')[0].strip()
+        if not text:
+            return
+        if self.kw_list.count() >= 5:
+            self.console.append_text("Limite de 5 keywords atingido")
+            return
+        self.kw_list.addItem(text)
 
