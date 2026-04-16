@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
 import re
+import logging
 
 
 class KeywordFinder:
@@ -120,4 +121,84 @@ class KeywordFinder:
         if not vals:
             return []
         return sorted(vals)
+
+    def get_keyword_arguments(self, name: str) -> List[str]:
+        """Locate the keyword definition in indexed files and extract argument names.
+
+        Returns argument names in order, without ${}.
+        """
+        files = self.get_files_for(name, "keyword")
+        if not files:
+            return []
+
+        for f in files:
+            try:
+                text = Path(f).read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            in_keywords = False
+            lines = text.splitlines()
+            for idx, raw in enumerate(lines):
+                line = raw.rstrip("\n\r")
+                stripped = line.strip()
+                low = stripped.lower()
+
+                # section header handling
+                if low.startswith("***") and low.endswith("***"):
+                    in_keywords = "keywords" in low
+                    continue
+
+                if not in_keywords:
+                    continue
+
+                # keyword definition lines usually start at column 0 (no indent)
+                if line and (not line[0].isspace()):
+                    # get the keyword name on this line
+                    if stripped.startswith("["):
+                        continue
+                    name_on_line = re.split(r"\s{2,}", stripped)[0]
+                    name_on_line = re.sub(r"\s+#.*$", "", name_on_line).strip()
+                    if name_on_line != name:
+                        continue
+                    # found keyword definition; scan following indented block for [Arguments]
+                    arg_names: List[str] = []
+                    j = idx + 1
+                    while j < len(lines):
+                        next_line = lines[j]
+                        if not next_line.strip():
+                            j += 1
+                            continue
+                        # section header or new top-level keyword stops the block
+                        if next_line.strip().lower().startswith("***"):
+                            break
+                        if not next_line[0].isspace():
+                            # next top-level keyword or test case
+                            break
+
+                        s = next_line.strip()
+                        low_s = s.lower()
+                        if low_s.startswith("[arguments]"):
+                            # extract all ${...} occurrences and strip ${}
+                            found = re.findall(r"\$\{([^}]+)\}", s)
+                            # fallback: if no ${}, split remaining by two+ spaces or tabs
+                            if not found:
+                                rest = s[len("[Arguments]"):].strip() if s.lower().startswith("[arguments]") else s
+                                parts = re.split(r"\s{2,}|\t+", rest)
+                                for p in parts:
+                                    p = p.strip()
+                                    if not p:
+                                        continue
+                                    # remove possible ${}
+                                    m = re.match(r"\$\{([^}]+)\}", p)
+                                    if m:
+                                        arg_names.append(m.group(1))
+                                    else:
+                                        arg_names.append(p.lstrip("$").strip("{}"))
+                            else:
+                                arg_names.extend(found)
+                            # return first occurrence
+                            return [a for a in arg_names]
+                        j += 1
+        return []
 

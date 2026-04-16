@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 import tempfile
 from pathlib import Path
 
@@ -15,7 +15,7 @@ def _to_resource_entry(repo_root: Path, path_str: str) -> str:
         return str(p)
 
 
-def build_temp_suite(keywords: List[str], repo_root: Path, resource_paths: Optional[List[str]] = None) -> str:
+def build_temp_suite(keywords: List[Union[str, dict]], repo_root: Path, resource_paths: Optional[List[str]] = None) -> str:
     """Generate a temporary .robot suite from a list of keywords.
 
     - Uses the project `repo_root` as base for Resource relative paths.
@@ -42,8 +42,23 @@ def build_temp_suite(keywords: List[str], repo_root: Path, resource_paths: Optio
     lines.append("")
     lines.extend(["*** Test Cases ***", "Executar Suite Montada"])
     for k in kws:
-        # indent a keyword line with 4 spaces (Robot indentation)
-        lines.append(f"    {k}")
+        # item can be a plain string (backwards compatibility) or dict with arguments
+        if isinstance(k, dict):
+            name = k.get("name") or ""
+            arg_names = k.get("argument_names") or []
+            args_map = k.get("arguments") or {}
+            if arg_names:
+                # preserve order of arguments
+                values = [str(args_map.get(n, "")) for n in arg_names]
+                entry = "    " + name
+                if values:
+                    entry = entry + "    " + "    ".join(values)
+                lines.append(entry)
+            else:
+                lines.append(f"    {name}")
+        else:
+            # indent a keyword line with 4 spaces (Robot indentation)
+            lines.append(f"    {k}")
 
     content = "\n".join(lines) + "\n"
 

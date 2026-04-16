@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QFileDialog, QListWidgetItem
 
 from core.config_manager import ConfigManager
 from core.keyword_finder import KeywordFinder
+from ui.keyword_arguments_dialog import KeywordArgumentsDialog
 from ui.console_panel import ConsolePanel
 from ui.execution_window import ExecutionWindow
 from core.suite_builder import build_temp_suite
@@ -168,17 +169,10 @@ class MainWindow(QMainWindow):
         meta = item.data(Qt.UserRole)
         if not meta:
             return
-        name = meta.get("name")
-        kind = meta.get("kind")
-        path = meta.get("path")
-        if self.kw_list.count() >= self.MAX_SUITE_ITEMS:
-            self.console.append_text(f"Limite de {self.MAX_SUITE_ITEMS} itens atingido")
-            return
-        li = QListWidgetItem()
-        li.setData(Qt.UserRole, meta)
-        self.kw_list.addItem(li)
-        self._set_item_widget(li, name, kind, path, meta)
-        self.keyword_edit.clear()
+        try:
+            self._handle_add_meta_with_args(meta)
+        finally:
+            self.keyword_edit.clear()
 
     def _add_meta_to_suite(self, meta: dict) -> None:
         if not meta:
@@ -193,6 +187,47 @@ class MainWindow(QMainWindow):
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
         self._set_item_widget(li, name, kind, path, meta)
+
+    def _handle_add_meta_with_args(self, meta: dict) -> None:
+        """If the selected meta is a keyword and has arguments, prompt the user.
+
+        Adds meta to suite with `argument_names` and `arguments` populated when confirmed.
+        """
+        if not meta:
+            return
+        name = meta.get("name")
+        kind = meta.get("kind") or meta.get("type")
+        path = meta.get("path") or meta.get("file")
+
+        # Only keywords can have arguments in this scope
+        if kind != "keyword" or not self.finder:
+            # add as-is
+            self._add_meta_to_suite(meta)
+            return
+
+        try:
+            arg_names = self.finder.get_keyword_arguments(name)
+        except Exception:
+            arg_names = []
+
+        if not arg_names:
+            # no args, add immediately
+            self.append_signal.emit(f"Keyword adicionada à suite: {name}")
+            self._add_meta_to_suite(meta)
+            return
+
+        # has args -> ask user
+        self.append_signal.emit(f"Keyword selecionada possui argumentos: {name}")
+        values = KeywordArgumentsDialog.get_arguments(self, name, arg_names)
+        if values is None:
+            self.append_signal.emit(f"Adição cancelada pelo usuário: {name}")
+            return
+
+        # attach ordered names and values
+        meta['argument_names'] = list(arg_names)
+        meta['arguments'] = {k: values.get(k, "") for k in arg_names}
+        self.append_signal.emit(f"Keyword adicionada à suite com argumentos: {name}")
+        self._add_meta_to_suite(meta)
 
     def _on_favorite_double(self, item: QListWidgetItem) -> None:
         if not item:
@@ -253,13 +288,13 @@ class MainWindow(QMainWindow):
                 self.append_signal.emit("Execução iniciada")
 
                 if keyword_items:
-                    kws = [m["name"] for m in keyword_items]
+                    # pass the structured items (may include arguments) to suite builder
                     resource_files = []
                     for m in keyword_items:
                         f = m.get("path")
                         if f and f not in resource_files:
                             resource_files.append(f)
-                    temp_path = build_temp_suite(kws, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
+                    temp_path = build_temp_suite(keyword_items, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
                     self.append_signal.emit("Iniciando execução (keywords)...")
                     params = dict(params_common)
                     params["CURRENT_DB"] = current_db
@@ -338,7 +373,14 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(4, 2, 4, 2)
 
-        label = QLabel(f"{name} [{kind}] ({Path(path).name})")
+        # display argument preview if present
+        arg_names = meta.get("argument_names") or []
+        arguments = meta.get("arguments") or {}
+        if arg_names:
+            preview = ", ".join(f"{n}={arguments.get(n,'')}" for n in arg_names)
+            label = QLabel(f"{name} ({len(arg_names)} args) [{preview}] ({Path(path).name})")
+        else:
+            label = QLabel(f"{name} [{kind}] ({Path(path).name})")
         layout.addWidget(label)
 
         remove_btn = QPushButton("Remover")
@@ -402,16 +444,14 @@ class MainWindow(QMainWindow):
         meta = item.data(Qt.UserRole)
         if not meta:
             return
+        # reuse add flow which handles arguments and limits
         if self.kw_list.count() >= self.MAX_SUITE_ITEMS:
             self.console.append_text(f"Limite de {self.MAX_SUITE_ITEMS} itens atingido")
             return
-        name = meta.get("name")
-        kind = meta.get("kind")
-        path = meta.get("path")
-        li = QListWidgetItem()
-        li.setData(Qt.UserRole, meta)
-        self.kw_list.addItem(li)
-        self._set_item_widget(li, name, kind, path, meta)
+        try:
+            self._handle_add_meta_with_args(meta)
+        except Exception:
+            pass
 
     def _set_suggestion_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
         from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel

@@ -1,4 +1,5 @@
 {
   "repository_path": "/Users/gustavo/Gerador-de-cenarios/tests_robot",
-  "base_resource_path": "keywords.robot"
+  "base_resource_path": "keywords.robot",
+  "automation_root_path": "/Users/gustavo/Gerador-de-cenarios/tests_robot"
 }
