@@ -80,3 +80,41 @@ class ConfigManager:
         new = [f for f in favs if (f.get("name"), f.get("type"), f.get("file")) != key]
         if len(new) != len(favs):
             self.set_favorites(new)
+
+    # --- saved scenarios persistence ---
+    def get_saved_scenarios(self) -> list:
+        cfg = self.load()
+        sc = cfg.get("saved_scenarios")
+        if not isinstance(sc, list):
+            return []
+        return sc
+
+    def set_saved_scenarios(self, scenarios: list) -> None:
+        cfg = self.load()
+        cfg["saved_scenarios"] = scenarios
+        self._config = cfg
+        self.save()
+
+    def add_or_update_scenario(self, scenario: dict) -> None:
+        """Add or update scenario by name."""
+        if not scenario or not isinstance(scenario, dict):
+            return
+        name = scenario.get("name")
+        if not name:
+            return
+        scs = self.get_saved_scenarios()
+        for i, s in enumerate(scs):
+            if s.get("name") == name:
+                scs[i] = scenario
+                self.set_saved_scenarios(scs)
+                return
+        scs.append(scenario)
+        self.set_saved_scenarios(scs)
+
+    def remove_scenario(self, name: str) -> None:
+        if not name:
+            return
+        scs = self.get_saved_scenarios()
+        new = [s for s in scs if s.get("name") != name]
+        if len(new) != len(scs):
+            self.set_saved_scenarios(new)

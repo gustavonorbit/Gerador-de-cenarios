@@ -82,6 +82,16 @@ class MainWindow(QMainWindow):
             pass
         self.current_executor = None
 
+        # wire save scenario button state and saved scenarios button
+        try:
+            # update enable state when items change
+            self.kw_list.model().rowsInserted.connect(lambda *_: self._update_save_button_state())
+            self.kw_list.model().rowsRemoved.connect(lambda *_: self._update_save_button_state())
+            self.save_scenario_btn.clicked.connect(self._on_save_scenario_clicked)
+            self.saved_scenarios_btn.clicked.connect(self._open_saved_scenarios)
+        except Exception:
+            pass
+
     def _setup_ui(self):
         central = QWidget()
         main_layout = QVBoxLayout(central)
@@ -98,6 +108,10 @@ class MainWindow(QMainWindow):
         self.favorites_btn = QPushButton("Favoritos")
         self.favorites_btn.clicked.connect(self._open_favorites)
         top_layout.addWidget(self.favorites_btn)
+        # Saved scenarios button
+        self.saved_scenarios_btn = QPushButton("Cenários Salvos")
+        self.saved_scenarios_btn.clicked.connect(self._open_saved_scenarios)
+        top_layout.addWidget(self.saved_scenarios_btn)
         main_layout.addLayout(top_layout)
 
         # Search area for keywords
@@ -123,17 +137,41 @@ class MainWindow(QMainWindow):
         # List of keywords (the assembled suite)
         self.kw_list = QListWidget()
         self.kw_list.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        main_layout.addWidget(QLabel("Suite montada:"))
+        # header for suite area with a '+' save scenario button
+        suite_header = QWidget()
+        sh_layout = QHBoxLayout(suite_header)
+        sh_layout.setContentsMargins(0, 0, 0, 0)
+        sh_layout.addWidget(QLabel("Suite montada:"))
+        sh_layout.addStretch()
+        self.save_scenario_btn = QPushButton("+")
+        self.save_scenario_btn.setEnabled(False)
+        self.save_scenario_btn.setFixedWidth(30)
+        sh_layout.addWidget(self.save_scenario_btn)
+        main_layout.addWidget(suite_header)
         main_layout.addWidget(self.kw_list)
 
         # Execution controls
         exec_layout = QHBoxLayout()
+
+        # Automation type selector (Desktop / Web)
+        self.automation_type_label = QLabel("Tipo de automação:")
+        exec_layout.addWidget(self.automation_type_label)
+        from PySide6.QtWidgets import QComboBox
+        self.automation_type_combo = QComboBox()
+        self.automation_type_combo.addItems(["Desktop", "Web"])
+        self.automation_type_combo.setCurrentText("Desktop")
+        self.automation_type_combo.currentTextChanged.connect(self._on_automation_type_changed)
+        exec_layout.addWidget(self.automation_type_combo)
+
+        # Show UI checkbox (relevant for Web)
         self.show_ui_chk = QCheckBox("Mostrar tela da automação (Web)")
+        # default: Desktop mode -> hide web-only control
+        self.show_ui_chk.setVisible(False)
         exec_layout.addWidget(self.show_ui_chk)
 
-        # Execution DB selection
-        exec_layout.addWidget(QLabel("Base de execução:"))
-        from PySide6.QtWidgets import QComboBox
+        # Execution DB selection (relevant for Desktop)
+        self.db_label = QLabel("Base de execução:")
+        exec_layout.addWidget(self.db_label)
         self.db_combo = QComboBox()
         self.db_combo.addItems(["SQL", "SAP", "ORACLE"])
         self.db_combo.setCurrentText("SQL")
@@ -156,6 +194,21 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.console, stretch=1)
 
         self.setCentralWidget(central)
+
+    def _on_automation_type_changed(self, value: str) -> None:
+        try:
+            if value == "Desktop":
+                # Desktop: show DB selector, hide web-only UI checkbox
+                self.db_label.setVisible(True)
+                self.db_combo.setVisible(True)
+                self.show_ui_chk.setVisible(False)
+            else:
+                # Web: hide DB selector, show web-only UI checkbox
+                self.db_label.setVisible(False)
+                self.db_combo.setVisible(False)
+                self.show_ui_chk.setVisible(True)
+        except Exception:
+            pass
 
     def _open_settings(self):
         # settings dialog removed - no manual path configuration
@@ -237,6 +290,40 @@ class MainWindow(QMainWindow):
             return
         self._add_meta_to_suite(meta)
 
+    def _update_save_button_state(self):
+        try:
+            self.save_scenario_btn.setEnabled(self.kw_list.count() > 0)
+        except Exception:
+            pass
+
+    def _on_save_scenario_clicked(self):
+        from ui.save_scenario_dialog import SaveScenarioDialog
+        d = SaveScenarioDialog(self)
+        ok = d.exec()
+        if not ok:
+            return
+        name = d.get_name()
+        if not name:
+            return
+        items = []
+        for i in range(self.kw_list.count()):
+            item = self.kw_list.item(i)
+            meta = item.data(Qt.UserRole) or {}
+            it = {
+                'name': meta.get('name'),
+                'type': meta.get('kind') or meta.get('type'),
+                'file': meta.get('path') or meta.get('file'),
+                'argument_names': meta.get('argument_names') or [],
+                'arguments': meta.get('arguments') or {}
+            }
+            items.append(it)
+        scenario = {'name': name, 'items': items}
+        try:
+            self.config.add_or_update_scenario(scenario)
+            self.append_signal.emit(f"Cenário salvo: {name}")
+        except Exception as e:
+            self.append_signal.emit(f"Falha ao salvar cenário: {e}")
+
     def _open_execution_window(self):
         kws = [self.kw_list.item(i).text() for i in range(self.kw_list.count())]
         win = ExecutionWindow("Suite Manual", kws, parent=self)
@@ -264,7 +351,9 @@ class MainWindow(QMainWindow):
         executor = RobotExecutor()
         # keep reference so Stop can call executor.stop()
         self.current_executor = executor
-        params_common = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
+        # params will be built per-run depending on automation type (Desktop/Web)
+        # See _on_automation_type_changed for UI behavior
+        
 
         def _cb(line: str):
             try:
@@ -276,11 +365,23 @@ class MainWindow(QMainWindow):
             # run keywords (single temp suite) if present
             try:
                 # Log and pass CURRENT_DB
+                # Determine automation type and log
                 try:
-                    current_db = (self.db_combo.currentText() if hasattr(self, 'db_combo') else None) or "SQL"
+                    automation_type = (self.automation_type_combo.currentText() if hasattr(self, 'automation_type_combo') else 'Desktop') or 'Desktop'
                 except Exception:
-                    current_db = "SQL"
-                self.append_signal.emit(f"Base de execução selecionada: {current_db}")
+                    automation_type = 'Desktop'
+                self.append_signal.emit(f"Tipo de automação selecionado: {automation_type}")
+
+                if automation_type == 'Desktop':
+                    try:
+                        current_db = (self.db_combo.currentText() if hasattr(self, 'db_combo') else None) or "SQL"
+                    except Exception:
+                        current_db = "SQL"
+                    self.append_signal.emit(f"Base de execução selecionada: {current_db}")
+                else:
+                    show_ui_state = "ativado" if self.show_ui_chk.isChecked() else "desativado"
+                    self.append_signal.emit(f"Mostrar tela da automação (Web): {show_ui_state}")
+
                 try:
                     self.ui_signal.emit("execution_started")
                 except Exception:
@@ -296,16 +397,21 @@ class MainWindow(QMainWindow):
                             resource_files.append(f)
                     temp_path = build_temp_suite(keyword_items, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
                     self.append_signal.emit("Iniciando execução (keywords)...")
-                    params = dict(params_common)
-                    params["CURRENT_DB"] = current_db
+                    # build params according to automation type
+                    if automation_type == 'Desktop':
+                        params = {"CURRENT_DB": current_db}
+                    else:
+                        params = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
                     code = executor.run(temp_path, params, _cb, working_dir=str(self.automation_root or self.app_root))
                     self.append_signal.emit(f"Execução keywords finalizada com código: {code}")
 
                 # run tests grouped by file
                 for file, tests in test_map.items():
                     self.append_signal.emit(f"Iniciando execução de testes em: {file}")
-                    params = dict(params_common)
-                    params["CURRENT_DB"] = current_db
+                    if automation_type == 'Desktop':
+                        params = {"CURRENT_DB": current_db}
+                    else:
+                        params = {"SHOW_UI": "True" if self.show_ui_chk.isChecked() else "False"}
                     params["__tests__"] = tests
                     code = executor.run(file, params, _cb, working_dir=str(self.automation_root or self.app_root))
                     self.append_signal.emit(f"Execução {Path(file).name} finalizada com código: {code}")
@@ -361,6 +467,34 @@ class MainWindow(QMainWindow):
             d.exec()
         except Exception as e:
             self.append_signal.emit(f"Erro abrindo Favoritos: {e}")
+
+    def _open_saved_scenarios(self):
+        try:
+            from ui.saved_scenarios_dialog import SavedScenariosDialog
+            d = SavedScenariosDialog(self.config, on_load=self._load_scenario, parent=self)
+            d.exec()
+        except Exception as e:
+            self.append_signal.emit(f"Erro abrindo Cenários Salvos: {e}")
+
+    def _load_scenario(self, scenario: dict) -> None:
+        # replace current suite with scenario items
+        try:
+            self.kw_list.clear()
+            for it in scenario.get('items', []):
+                meta = {
+                    'name': it.get('name'),
+                    'kind': it.get('type'),
+                    'path': it.get('file'),
+                    'argument_names': it.get('argument_names') or [],
+                    'arguments': it.get('arguments') or {}
+                }
+                li = QListWidgetItem()
+                li.setData(Qt.UserRole, meta)
+                self.kw_list.addItem(li)
+                self._set_item_widget(li, meta.get('name'), meta.get('kind') or meta.get('type'), meta.get('path') or meta.get('file'), meta)
+            self.append_signal.emit(f"Cenário carregado: {scenario.get('name')}")
+        except Exception as e:
+            self.append_signal.emit(f"Falha ao carregar cenário: {e}")
 
     def _handle_output_line(self, line: str):
         self.console.append_text(line)
