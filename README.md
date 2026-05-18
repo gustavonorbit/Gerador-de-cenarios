@@ -2,6 +2,8 @@
 
 Ferramenta desktop para montar e executar suites Robot Framework com experiência simples e pronta para uso.
 
+Versão atual: **2.0**
+
 Resumo da nova arquitetura:
 
 - O usuário seleciona a `raiz da automação` (pasta do projeto Robot) via um botão na UI.
@@ -9,6 +11,7 @@ Resumo da nova arquitetura:
 - A aplicação indexa recursivamente `*.robot` e `*.resource` dentro da raiz selecionada, ignorando diretórios comuns como `.git`, `venv`, `__pycache__`, `node_modules`, `dist`, `build`, `.idea`, `.vscode`.
 - A área de seleção exibe automaticamente `keywords` e `tests` encontrados no índice, mesmo com o campo de busca vazio.
 - A lista pode ser filtrada por base de execução (`SQL`, `SAP`, `ORACLE`), por módulo/pasta do projeto e por tipo (`Todos`, `Somente Keywords`, `Somente Testes`).
+- A interface principal exibe a versão atual da ferramenta no topo.
 - A execução utiliza o `working directory` igual à raiz da automação selecionada.
 
 Principais componentes:
@@ -46,7 +49,7 @@ python app.py
 	- `SAP`
 	- `ORACLE`
 
-A base selecionada também filtra a lista de itens disponíveis. A detecção inicial é simples e usa o caminho relativo do arquivo: caminhos que contêm `SQL`, `SAP` ou `ORACLE` são associados à base correspondente. Itens sem base identificada são tratados como `Comum` e continuam visíveis junto da base selecionada.
+A base selecionada também filtra a lista de itens disponíveis. A detecção usa os segmentos do caminho relativo do arquivo, funcionando com barras de Windows e macOS/Linux. Quando um segmento é `SQL`, `SAP` ou `ORACLE`, a base é associada a esse valor e o módulo passa a ser o próximo segmento do caminho. Itens sem base identificada são tratados como `Comum` e continuam visíveis junto da base selecionada.
 
 A variável selecionada será enviada ao Robot como `CURRENT_DB` (ex.: `-v CURRENT_DB:SQL`).
 

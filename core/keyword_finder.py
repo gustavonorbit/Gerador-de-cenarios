@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
+import os
 import re
 
 
@@ -23,6 +24,7 @@ class KeywordFinder:
             self.project_root = Path(project_root).resolve()
 
         self.ignore = set(ignore) if ignore is not None else set(self.DEFAULT_IGNORE)
+        self._ignore_normalized = {part.casefold() for part in self.ignore}
 
         # index structures
         self._keyword_to_files: Dict[str, Set[str]] = {}
@@ -32,7 +34,7 @@ class KeywordFinder:
 
     def _is_ignored(self, path: Path) -> bool:
         for part in path.parts:
-            if part in self.ignore:
+            if part.casefold() in self._ignore_normalized:
                 return True
         return False
 
@@ -61,8 +63,7 @@ class KeywordFinder:
     def _index_file(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
         relative_file = self._relative_file(path)
-        module = self._detect_module(relative_file)
-        database_scope = self._detect_database_scope(relative_file)
+        database_scope, module, submodule = self._detect_path_metadata(relative_file)
 
         in_keywords = False
         in_tests = False
@@ -86,7 +87,7 @@ class KeywordFinder:
                     name = re.split(r"\s{2,}", stripped)[0]
                     name = re.sub(r"\s+#.*$", "", name).strip()
                     if name:
-                        self._add_item(name, "keyword", path, relative_file, module, database_scope)
+                        self._add_item(name, "keyword", path, relative_file, module, database_scope, submodule)
                 continue
 
             if in_tests:
@@ -100,28 +101,37 @@ class KeywordFinder:
                     name = re.split(r"\s{2,}", stripped)[0]
                     name = re.sub(r"\s+#.*$", "", name).strip()
                     if name:
-                        self._add_item(name, "test", path, relative_file, module, database_scope)
+                        self._add_item(name, "test", path, relative_file, module, database_scope, submodule)
                 continue
 
     def _relative_file(self, path: Path) -> str:
         try:
-            return str(path.resolve().relative_to(self.project_root))
+            return str(Path(path).resolve().relative_to(Path(self.project_root).resolve()))
         except Exception:
-            return str(path)
+            try:
+                return os.path.relpath(str(path), str(self.project_root))
+            except Exception:
+                return str(path)
 
-    def _detect_database_scope(self, relative_file: str) -> str:
-        path_upper = relative_file.upper()
-        for database in self.DATABASE_SCOPES:
-            if database in path_upper:
-                return database
-        return "Comum"
+    def _relative_parts(self, relative_file: str) -> List[str]:
+        normalized = str(relative_file).replace("\\", "/")
+        return [part for part in normalized.split("/") if part and part != "."]
 
-    def _detect_module(self, relative_file: str) -> str:
-        parts_upper = {part.upper() for part in Path(relative_file).parts}
-        for module in self.KNOWN_MODULES:
-            if module in parts_upper:
-                return module
-        return "Geral"
+    def _detect_path_metadata(self, relative_file: str) -> Tuple[str, str, str]:
+        parts = self._relative_parts(relative_file)
+        dirs = parts[:-1] if parts and "." in parts[-1] else parts
+        upper_dirs = [part.upper() for part in dirs]
+
+        for idx, part in enumerate(upper_dirs):
+            if part in self.DATABASE_SCOPES:
+                module = dirs[idx + 1] if idx + 1 < len(dirs) else "Geral"
+                submodule = dirs[idx + 2] if idx + 2 < len(dirs) else "Geral"
+                return part, module, submodule
+
+        relevant_dirs = [part for part in dirs if part.casefold() not in self._ignore_normalized]
+        module = relevant_dirs[0] if relevant_dirs else "Geral"
+        submodule = relevant_dirs[1] if len(relevant_dirs) > 1 else "Geral"
+        return "Comum", module, submodule
 
     def _add_item(
         self,
@@ -131,6 +141,7 @@ class KeywordFinder:
         relative_file: str,
         module: str,
         database_scope: str,
+        submodule: str,
     ) -> None:
         file_path = str(path)
         if kind == "keyword":
@@ -150,6 +161,7 @@ class KeywordFinder:
             "file": file_path,
             "relative_file": relative_file,
             "module": module,
+            "submodule": submodule,
             "database_scope": database_scope,
         })
 
@@ -205,6 +217,14 @@ class KeywordFinder:
         )
         modules = {item.get("module") or "Geral" for item in items}
         return sorted(modules, key=self._module_sort_key)
+
+    def detected_modules(self) -> List[str]:
+        modules = {item.get("module") or "Geral" for item in self._items}
+        return sorted(modules, key=self._module_sort_key)
+
+    def detected_database_scopes(self) -> List[str]:
+        scopes = {item.get("database_scope") or "Comum" for item in self._items}
+        return sorted(scopes, key=lambda scope: (scope == "Comum", scope))
 
     def _item_sort_key(self, item: Dict[str, str]) -> Tuple[int, int, str, str]:
         return (
