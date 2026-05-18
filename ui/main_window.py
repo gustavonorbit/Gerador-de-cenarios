@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLineEdit,
     QListWidget,
+    QTabWidget,
+    QComboBox,
     QSizePolicy,
     QCheckBox,
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QSize
 from PySide6.QtWidgets import QFileDialog, QListWidgetItem
 
 from core.config_manager import ConfigManager
@@ -38,6 +40,8 @@ class MainWindow(QMainWindow):
     append_signal = Signal(str)
     ui_signal = Signal(str)
     MAX_SUITE_ITEMS = 5
+    SUGGESTION_ITEM_HEIGHT = 30
+    SUGGESTION_TEXT_LIMIT = 120
 
     def __init__(self, project_root: Optional[Path] = None):
         super().__init__()
@@ -61,6 +65,8 @@ class MainWindow(QMainWindow):
 
         # Keyword finder will be instantiated when an automation root is present
         self.finder: Optional[KeywordFinder] = None
+        self.module_lists: Dict[str, QListWidget] = {}
+        self._suppress_filter_logs = False
 
         # UI Widgets
         self.console = ConsolePanel()
@@ -114,23 +120,36 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.saved_scenarios_btn)
         main_layout.addLayout(top_layout)
 
-        # Search area for keywords
-        main_layout.addWidget(QLabel("Buscar keyword:"))
+        # Search/filter area for indexed keywords and tests
+        main_layout.addWidget(QLabel("Buscar keyword/teste:"))
         kw_layout = QHBoxLayout()
         self.keyword_edit = QLineEdit()
-        self.keyword_edit.setPlaceholderText("Digite para buscar keywords...")
+        self.keyword_edit.setPlaceholderText("Digite para filtrar keywords e testes...")
         self.keyword_edit.textChanged.connect(self._on_search_text_changed)
         self.add_kw_btn = QPushButton("Adicionar selecionada")
         self.add_kw_btn.clicked.connect(self._on_add_selected_suggestion)
+        self.favorite_selected_btn = QPushButton("Favoritar")
+        self.favorite_selected_btn.setFixedWidth(80)
+        self.favorite_selected_btn.clicked.connect(self._toggle_selected_favorite)
         kw_layout.addWidget(self.keyword_edit)
         kw_layout.addWidget(self.add_kw_btn)
+        kw_layout.addWidget(self.favorite_selected_btn)
         main_layout.addLayout(kw_layout)
 
-        # Suggestions list
-        self.suggestion_list = QListWidget()
-        self.suggestion_list.itemDoubleClicked.connect(self._on_suggestion_double)
-        main_layout.addWidget(QLabel("Sugestões:"))
-        main_layout.addWidget(self.suggestion_list)
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Tipo:"))
+        self.type_filter_combo = QComboBox()
+        self.type_filter_combo.addItems(["Todos", "Somente Keywords", "Somente Testes"])
+        self.type_filter_combo.currentTextChanged.connect(self._on_type_filter_changed)
+        filter_layout.addWidget(self.type_filter_combo)
+        filter_layout.addStretch()
+        main_layout.addLayout(filter_layout)
+
+        # Suggestions grouped by module
+        self.suggestion_tabs = QTabWidget()
+        self.suggestion_tabs.currentChanged.connect(self._on_module_tab_changed)
+        main_layout.addWidget(QLabel("Itens disponíveis:"))
+        main_layout.addWidget(self.suggestion_tabs)
 
         # (Favorites moved to separate dialog) suggestions area expands
 
@@ -156,7 +175,6 @@ class MainWindow(QMainWindow):
         # Automation type selector (Desktop / Web)
         self.automation_type_label = QLabel("Tipo de automação:")
         exec_layout.addWidget(self.automation_type_label)
-        from PySide6.QtWidgets import QComboBox
         self.automation_type_combo = QComboBox()
         self.automation_type_combo.addItems(["Desktop", "Web"])
         self.automation_type_combo.setCurrentText("Desktop")
@@ -175,6 +193,7 @@ class MainWindow(QMainWindow):
         self.db_combo = QComboBox()
         self.db_combo.addItems(["SQL", "SAP", "ORACLE"])
         self.db_combo.setCurrentText("SQL")
+        self.db_combo.currentTextChanged.connect(self._on_database_filter_changed)
         exec_layout.addWidget(self.db_combo)
 
         self.open_exec_btn = QPushButton("Abrir tela de execução")
@@ -215,7 +234,8 @@ class MainWindow(QMainWindow):
         self.console.append_text("Tela de Configurações removida: caminhos são detectados automaticamente")
 
     def _on_add_selected_suggestion(self):
-        item = self.suggestion_list.currentItem()
+        current_list = self._current_suggestion_list()
+        item = current_list.currentItem() if current_list else None
         if not item:
             self.console.append_text("Nenhuma sugestão selecionada")
             return
@@ -236,7 +256,7 @@ class MainWindow(QMainWindow):
         name = meta.get("name")
         kind = meta.get("kind") or meta.get("type")
         path = meta.get("path") or meta.get("file")
-        li = QListWidgetItem()
+        li = QListWidgetItem(f"{name} [{kind}]")
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
         self._set_item_widget(li, name, kind, path, meta)
@@ -259,7 +279,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            arg_names = self.finder.get_keyword_arguments(name)
+            arg_names = self.finder.get_keyword_arguments(name, file_path=path)
         except Exception:
             arg_names = []
 
@@ -443,6 +463,9 @@ class MainWindow(QMainWindow):
                 self.stop_btn.setEnabled(True)
                 self.run_btn.setEnabled(True)
                 self.open_exec_btn.setEnabled(True)
+            elif cmd == "index_finished":
+                self._refresh_suggestions()
+                self._log_current_filters()
         except Exception:
             pass
 
@@ -488,7 +511,7 @@ class MainWindow(QMainWindow):
                     'argument_names': it.get('argument_names') or [],
                     'arguments': it.get('arguments') or {}
                 }
-                li = QListWidgetItem()
+                li = QListWidgetItem(f"{meta.get('name')} [{meta.get('kind') or meta.get('type')}]")
                 li.setData(Qt.UserRole, meta)
                 self.kw_list.addItem(li)
                 self._set_item_widget(li, meta.get('name'), meta.get('kind') or meta.get('type'), meta.get('path') or meta.get('file'), meta)
@@ -510,11 +533,12 @@ class MainWindow(QMainWindow):
         # display argument preview if present
         arg_names = meta.get("argument_names") or []
         arguments = meta.get("arguments") or {}
+        file_name = Path(path).name if path else ""
         if arg_names:
             preview = ", ".join(f"{n}={arguments.get(n,'')}" for n in arg_names)
-            label = QLabel(f"{name} ({len(arg_names)} args) [{preview}] ({Path(path).name})")
+            label = QLabel(f"{name} ({len(arg_names)} args) [{preview}] ({file_name})")
         else:
-            label = QLabel(f"{name} [{kind}] ({Path(path).name})")
+            label = QLabel(f"{name} [{kind}] ({file_name})")
         layout.addWidget(label)
 
         remove_btn = QPushButton("Remover")
@@ -540,8 +564,7 @@ class MainWindow(QMainWindow):
     def _refresh_favorites_ui(self):
         # Favorites are shown in a separate dialog; refresh suggestion stars
         try:
-            txt = self.keyword_edit.text() if hasattr(self, 'keyword_edit') else ''
-            self._on_search_text_changed(txt)
+            self._refresh_suggestions()
         except Exception:
             pass
 
@@ -552,25 +575,143 @@ class MainWindow(QMainWindow):
         try:
             k_count, t_count = self.finder.index()
             self.append_signal.emit(f"Projeto indexado com sucesso. {k_count} keywords e {t_count} testes encontrados.")
+            self.ui_signal.emit("index_finished")
         except Exception as e:
             self.append_signal.emit(f"Erro na indexação: {e}")
 
     def _on_search_text_changed(self, text: str):
+        self._refresh_suggestions()
+
+    def _on_database_filter_changed(self, value: str):
         try:
-            self.suggestion_list.clear()
-            if not self.finder:
-                return
-            results = self.finder.search(text)
-            for name, kind in results:
-                files = self.finder.get_files_for(name, kind)
-                file_display = files[0] if files else ""
-                meta = {"name": name, "kind": kind, "path": file_display}
-                it = QListWidgetItem()
-                it.setData(Qt.UserRole, meta)
-                self.suggestion_list.addItem(it)
-                self._set_suggestion_widget(it, name, kind, file_display, meta)
+            if not self._suppress_filter_logs:
+                self.append_signal.emit(f"Filtro aplicado: base {value}")
+            self._refresh_suggestions()
         except Exception:
             pass
+
+    def _on_type_filter_changed(self, value: str):
+        try:
+            if not self._suppress_filter_logs:
+                self.append_signal.emit(f"Tipo exibido: {value}")
+            self._refresh_suggestions()
+        except Exception:
+            pass
+
+    def _on_module_tab_changed(self, index: int):
+        try:
+            if self._suppress_filter_logs or index < 0:
+                return
+            module = self.suggestion_tabs.tabText(index)
+            if module:
+                self.append_signal.emit(f"Módulo selecionado: {module}")
+        except Exception:
+            pass
+
+    def _current_suggestion_list(self) -> Optional[QListWidget]:
+        try:
+            widget = self.suggestion_tabs.currentWidget()
+            if isinstance(widget, QListWidget):
+                return widget
+        except Exception:
+            pass
+        return None
+
+    def _current_database_filter(self) -> str:
+        try:
+            return self.db_combo.currentText() or "SQL"
+        except Exception:
+            return "SQL"
+
+    def _current_type_filter_label(self) -> str:
+        try:
+            return self.type_filter_combo.currentText() or "Todos"
+        except Exception:
+            return "Todos"
+
+    def _current_kind_filter(self) -> Optional[str]:
+        value = self._current_type_filter_label()
+        if value == "Somente Keywords":
+            return "keyword"
+        if value == "Somente Testes":
+            return "test"
+        return None
+
+    def _log_current_filters(self) -> None:
+        self.append_signal.emit(f"Filtro aplicado: base {self._current_database_filter()}")
+        self.append_signal.emit(f"Tipo exibido: {self._current_type_filter_label()}")
+        try:
+            current_index = self.suggestion_tabs.currentIndex()
+            if current_index >= 0:
+                module = self.suggestion_tabs.tabText(current_index)
+                if module:
+                    self.append_signal.emit(f"Módulo selecionado: {module}")
+        except Exception:
+            pass
+
+    def _refresh_suggestions(self):
+        try:
+            if not hasattr(self, "suggestion_tabs"):
+                return
+
+            previous_module = ""
+            try:
+                current_index = self.suggestion_tabs.currentIndex()
+                if current_index >= 0:
+                    previous_module = self.suggestion_tabs.tabText(current_index)
+            except Exception:
+                previous_module = ""
+
+            self._suppress_filter_logs = True
+            self.suggestion_tabs.clear()
+            self.module_lists.clear()
+
+            if not self.finder:
+                return
+
+            query = self.keyword_edit.text() if hasattr(self, "keyword_edit") else ""
+            database_scope = self._current_database_filter()
+            kind_filter = self._current_kind_filter()
+            modules = self.finder.modules_for(database_scope=database_scope, kind_filter=kind_filter)
+            if not modules:
+                modules = ["Geral"]
+
+            results = self.finder.search_items(
+                query,
+                limit=None,
+                database_scope=database_scope,
+                kind_filter=kind_filter,
+            )
+            grouped: Dict[str, List[dict]] = {module: [] for module in modules}
+            for meta in results:
+                module = meta.get("module") or "Geral"
+                grouped.setdefault(module, []).append(meta)
+
+            for module in modules:
+                module_list = QListWidget()
+                module_list.setUniformItemSizes(True)
+                module_list.setSpacing(1)
+                module_list.itemDoubleClicked.connect(self._on_suggestion_double)
+                self.module_lists[module] = module_list
+                self.suggestion_tabs.addTab(module_list, module)
+
+                for meta in grouped.get(module, []):
+                    name = meta.get("name", "")
+                    kind = meta.get("kind") or meta.get("type") or ""
+                    file_display = meta.get("path") or meta.get("file") or ""
+                    item = QListWidgetItem(f"{name} [{kind}]")
+                    item.setData(Qt.UserRole, meta)
+                    module_list.addItem(item)
+                    self._set_suggestion_widget(item, name, kind, file_display, meta)
+
+            if previous_module and previous_module in self.module_lists:
+                self.suggestion_tabs.setCurrentIndex(modules.index(previous_module))
+            elif modules:
+                self.suggestion_tabs.setCurrentIndex(0)
+        except Exception:
+            pass
+        finally:
+            self._suppress_filter_logs = False
 
     def _on_suggestion_double(self, item):
         if not item:
@@ -588,41 +729,60 @@ class MainWindow(QMainWindow):
             pass
 
     def _set_suggestion_widget(self, list_item: QListWidgetItem, name: str, kind: str, path: str, meta: dict):
-        from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+        list_item.setSizeHint(QSize(0, self.SUGGESTION_ITEM_HEIGHT))
+        text = self._suggestion_item_text(name, kind, path, meta)
+        list_item.setText(self._truncate_text(text, self.SUGGESTION_TEXT_LIMIT))
+        list_item.setToolTip(self._suggestion_tooltip_text(name, kind, path, meta))
 
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(4, 2, 4, 2)
+    def _suggestion_item_text(self, name: str, kind: str, path: str, meta: dict) -> str:
+        star = "★" if self._is_favorite(name, kind, path) else "☆"
+        file_label = self._suggestion_short_file_label(path, meta)
+        return f"{star} {name} [{kind}] - {file_label}"
 
-        label = QLabel(f"{name} ({Path(path).name})")
-        layout.addWidget(label)
+    def _suggestion_tooltip_text(self, name: str, kind: str, path: str, meta: dict) -> str:
+        file_label = meta.get("relative_file") or path or ""
+        return f"{name} [{kind}] ({file_label})"
 
-        star_btn = QPushButton("☆")
-        star_btn.setFixedWidth(28)
+    def _suggestion_short_file_label(self, path: str, meta: dict) -> str:
+        relative_file = meta.get("relative_file") or ""
+        if relative_file and len(relative_file) <= 80:
+            return relative_file
+        if path:
+            return Path(path).name
+        return relative_file
 
-        def _refresh_star():
-            favs = self.config.get_favorites()
-            is_fav = any((f.get("name"), f.get("type"), f.get("file")) == (name, kind, path) for f in favs)
-            star_btn.setText("★" if is_fav else "☆")
+    def _truncate_text(self, text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        return f"{text[:max(0, limit - 3)]}..."
 
-        def _on_star():
-            fav = {"name": name, "type": kind, "file": path}
-            favs = self.config.get_favorites()
-            exists = any((f.get("name"), f.get("type"), f.get("file")) == (name, kind, path) for f in favs)
-            if exists:
-                self.config.remove_favorite(fav)
-                self.append_signal.emit(f"Favorito removido: {name}")
-            else:
-                self.config.add_favorite(fav)
-                self.append_signal.emit(f"Favorito adicionado: {name}")
-            _refresh_star()
-            self._refresh_favorites_ui()
+    def _is_favorite(self, name: str, kind: str, path: str) -> bool:
+        favs = self.config.get_favorites()
+        return any((f.get("name"), f.get("type"), f.get("file")) == (name, kind, path) for f in favs)
 
-        star_btn.clicked.connect(_on_star)
-        _refresh_star()
-        layout.addWidget(star_btn)
+    def _toggle_selected_favorite(self):
+        current_list = self._current_suggestion_list()
+        item = current_list.currentItem() if current_list else None
+        if not item:
+            self.console.append_text("Nenhum item selecionado para favoritar")
+            return
 
-        self.suggestion_list.setItemWidget(list_item, widget)
+        meta = item.data(Qt.UserRole)
+        if not meta:
+            return
+
+        name = meta.get("name")
+        kind = meta.get("kind") or meta.get("type")
+        path = meta.get("path") or meta.get("file")
+        fav = {"name": name, "type": kind, "file": path}
+
+        if self._is_favorite(name, kind, path):
+            self.config.remove_favorite(fav)
+            self.append_signal.emit(f"Favorito removido: {name}")
+        else:
+            self.config.add_favorite(fav)
+            self.append_signal.emit(f"Favorito adicionado: {name}")
+        self._refresh_favorites_ui()
 
     # --- automation root selection / persistence ---
     def _choose_automation_root(self):
@@ -642,8 +802,7 @@ class MainWindow(QMainWindow):
         try:
             self.finder = KeywordFinder(root)
             self.root_label.setText(f"Raiz ativa: {root}")
+            self._refresh_suggestions()
             threading.Thread(target=self._index_project, daemon=True).start()
         except Exception as e:
             self.append_signal.emit(f"Erro ao inicializar indexador: {e}")
-
-

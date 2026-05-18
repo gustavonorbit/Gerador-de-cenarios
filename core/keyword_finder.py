@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
 import re
-import logging
 
 
 class KeywordFinder:
@@ -13,6 +12,8 @@ class KeywordFinder:
     """
 
     DEFAULT_IGNORE = {".git", "venv", "__pycache__", "node_modules", "dist", "build", ".idea", ".vscode"}
+    DATABASE_SCOPES = ("SQL", "SAP", "ORACLE")
+    KNOWN_MODULES = ("CADGF", "CONSULT", "ASSIST", "ATENDE", "AGENDA", "LAB", "OCUP")
 
     def __init__(self, project_root: Optional[Path] = None, ignore: Optional[Set[str]] = None):
         if project_root is None:
@@ -26,6 +27,8 @@ class KeywordFinder:
         # index structures
         self._keyword_to_files: Dict[str, Set[str]] = {}
         self._test_to_files: Dict[str, Set[str]] = {}
+        self._items: List[Dict[str, str]] = []
+        self._seen_items: Set[Tuple[str, str, str]] = set()
 
     def _is_ignored(self, path: Path) -> bool:
         for part in path.parts:
@@ -40,6 +43,8 @@ class KeywordFinder:
         """
         self._keyword_to_files.clear()
         self._test_to_files.clear()
+        self._items.clear()
+        self._seen_items.clear()
 
         patterns = ("*.robot", "*.resource")
         for pattern in patterns:
@@ -55,6 +60,9 @@ class KeywordFinder:
 
     def _index_file(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore")
+        relative_file = self._relative_file(path)
+        module = self._detect_module(relative_file)
+        database_scope = self._detect_database_scope(relative_file)
 
         in_keywords = False
         in_tests = False
@@ -78,7 +86,7 @@ class KeywordFinder:
                     name = re.split(r"\s{2,}", stripped)[0]
                     name = re.sub(r"\s+#.*$", "", name).strip()
                     if name:
-                        self._keyword_to_files.setdefault(name, set()).add(str(path))
+                        self._add_item(name, "keyword", path, relative_file, module, database_scope)
                 continue
 
             if in_tests:
@@ -92,24 +100,140 @@ class KeywordFinder:
                     name = re.split(r"\s{2,}", stripped)[0]
                     name = re.sub(r"\s+#.*$", "", name).strip()
                     if name:
-                        self._test_to_files.setdefault(name, set()).add(str(path))
+                        self._add_item(name, "test", path, relative_file, module, database_scope)
                 continue
+
+    def _relative_file(self, path: Path) -> str:
+        try:
+            return str(path.resolve().relative_to(self.project_root))
+        except Exception:
+            return str(path)
+
+    def _detect_database_scope(self, relative_file: str) -> str:
+        path_upper = relative_file.upper()
+        for database in self.DATABASE_SCOPES:
+            if database in path_upper:
+                return database
+        return "Comum"
+
+    def _detect_module(self, relative_file: str) -> str:
+        parts_upper = {part.upper() for part in Path(relative_file).parts}
+        for module in self.KNOWN_MODULES:
+            if module in parts_upper:
+                return module
+        return "Geral"
+
+    def _add_item(
+        self,
+        name: str,
+        kind: str,
+        path: Path,
+        relative_file: str,
+        module: str,
+        database_scope: str,
+    ) -> None:
+        file_path = str(path)
+        if kind == "keyword":
+            self._keyword_to_files.setdefault(name, set()).add(file_path)
+        else:
+            self._test_to_files.setdefault(name, set()).add(file_path)
+
+        key = (name, kind, file_path)
+        if key in self._seen_items:
+            return
+        self._seen_items.add(key)
+        self._items.append({
+            "name": name,
+            "kind": kind,
+            "type": kind,
+            "path": file_path,
+            "file": file_path,
+            "relative_file": relative_file,
+            "module": module,
+            "database_scope": database_scope,
+        })
+
+    def all_items(self) -> List[Dict[str, str]]:
+        return [dict(item) for item in self._items]
+
+    def search_items(
+        self,
+        query: str = "",
+        limit: Optional[int] = None,
+        database_scope: Optional[str] = None,
+        module: Optional[str] = None,
+        kind_filter: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        q = (query or "").strip().lower()
+        selected_database = (database_scope or "").strip().upper()
+        selected_module = (module or "").strip().upper()
+        selected_kind = (kind_filter or "").strip().lower()
+
+        results: List[Dict[str, str]] = []
+        for item in self._items:
+            if q and q not in item.get("name", "").lower():
+                continue
+
+            if selected_database:
+                item_database = item.get("database_scope", "Comum").upper()
+                if item_database not in (selected_database, "COMUM"):
+                    continue
+
+            if selected_module and item.get("module", "").upper() != selected_module:
+                continue
+
+            if selected_kind and item.get("kind") != selected_kind:
+                continue
+
+            results.append(dict(item))
+
+        results.sort(key=self._item_sort_key)
+        if limit is not None:
+            return results[:limit]
+        return results
+
+    def modules_for(
+        self,
+        database_scope: Optional[str] = None,
+        kind_filter: Optional[str] = None,
+    ) -> List[str]:
+        items = self.search_items(
+            "",
+            limit=None,
+            database_scope=database_scope,
+            kind_filter=kind_filter,
+        )
+        modules = {item.get("module") or "Geral" for item in items}
+        return sorted(modules, key=self._module_sort_key)
+
+    def _item_sort_key(self, item: Dict[str, str]) -> Tuple[int, int, str, str]:
+        return (
+            self._module_sort_key(item.get("module") or "Geral"),
+            0 if item.get("kind") == "keyword" else 1,
+            item.get("name", "").lower(),
+            item.get("relative_file", "").lower(),
+        )
+
+    def _module_sort_key(self, module: str) -> int:
+        try:
+            return self.KNOWN_MODULES.index(module)
+        except ValueError:
+            return len(self.KNOWN_MODULES)
 
     def search(self, query: str, limit: int = 50) -> List[Tuple[str, str]]:
         """Return list of (name, kind) matching query (case-insensitive substring).
 
         kind is 'keyword' or 'test'.
         """
-        if not query:
-            return []
-        q = query.lower()
+        q = query or ""
         results: List[Tuple[str, str]] = []
-        for k in self._keyword_to_files.keys():
-            if q in k.lower():
-                results.append((k, "keyword"))
-        for t in self._test_to_files.keys():
-            if q in t.lower():
-                results.append((t, "test"))
+        seen: Set[Tuple[str, str]] = set()
+        for item in self.search_items(q, limit=None):
+            key = (item.get("name", ""), item.get("kind", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(key)
         results.sort(key=lambda s: (s[1], s[0].lower()))
         return results[:limit]
 
@@ -122,12 +246,14 @@ class KeywordFinder:
             return []
         return sorted(vals)
 
-    def get_keyword_arguments(self, name: str) -> List[str]:
+    def get_keyword_arguments(self, name: str, file_path: Optional[str] = None) -> List[str]:
         """Locate the keyword definition in indexed files and extract argument names.
 
         Returns argument names in order, without ${}.
         """
         files = self.get_files_for(name, "keyword")
+        if file_path and file_path in files:
+            files = [file_path] + [f for f in files if f != file_path]
         if not files:
             return []
 
@@ -201,4 +327,3 @@ class KeywordFinder:
                             return [a for a in arg_names]
                         j += 1
         return []
-
