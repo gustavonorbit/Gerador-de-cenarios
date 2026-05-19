@@ -30,6 +30,7 @@ from PySide6.QtCore import Signal, Qt, QSize
 from PySide6.QtWidgets import QFileDialog, QListWidgetItem
 
 from core.config_manager import ConfigManager
+from core.app_info import APP_VERSION
 from core.keyword_finder import KeywordFinder
 from ui.keyword_arguments_dialog import KeywordArgumentsDialog
 from ui.console_panel import ConsolePanel
@@ -108,6 +109,8 @@ class MainWindow(QMainWindow):
         self.root_label = QLabel("Raiz ativa: (nenhuma)")
         top_layout.addWidget(self.root_label)
         top_layout.addStretch()
+        self.version_label = QLabel(f"Versão {APP_VERSION}")
+        top_layout.addWidget(self.version_label)
         self.select_root_btn = QPushButton("Selecionar raiz da automação")
         self.select_root_btn.clicked.connect(self._choose_automation_root)
         top_layout.addWidget(self.select_root_btn)
@@ -707,6 +710,10 @@ class MainWindow(QMainWindow):
         try:
             k_count, t_count = self.finder.index()
             self.append_signal.emit(f"Projeto indexado com sucesso. {k_count} keywords e {t_count} testes encontrados.")
+            modules = ", ".join(self.finder.detected_modules()) or "nenhum"
+            databases = ", ".join(self.finder.detected_database_scopes()) or "nenhuma"
+            self.append_signal.emit(f"Módulos detectados: {modules}")
+            self.append_signal.emit(f"Bases detectadas: {databases}")
             self.ui_signal.emit("index_finished")
         except Exception as e:
             self.append_signal.emit(f"Erro na indexação: {e}")
