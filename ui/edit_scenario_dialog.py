@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QWidget,
 )
+from PySide6.QtCore import Qt
 from typing import Optional
 
 
@@ -58,14 +59,14 @@ class EditScenarioDialog(QDialog):
             args = it.get('argument_names') or []
             preview = ', '.join(f"{n}={it.get('arguments',{}).get(n,'')}" for n in args) if args else ''
             li = QListWidgetItem(f"{name} [{preview}]")
-            li.setData(0, it)
+            li.setData(Qt.UserRole, it)
             self.items_list.addItem(li)
 
     def _remove_item(self):
         it = self.items_list.currentItem()
         if not it:
             return
-        obj = it.data(0)
+        obj = it.data(Qt.UserRole)
         new = [x for x in self.scenario.get('items', []) if x is not obj]
         self.scenario['items'] = new
         self._refresh_items()

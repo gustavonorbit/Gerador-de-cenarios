@@ -1,5 +1,94 @@
 {
   "repository_path": "/Users/gustavo/Gerador-de-cenarios/tests_robot",
   "base_resource_path": "keywords.robot",
-  "automation_root_path": "/Users/gustavo/Gerador-de-cenarios/tests_robot"
+  "automation_root_path": "C:\\repositorio\\smart-desktop-automated-robot",
+  "favorites": [
+    {
+      "name": "Consultar Paciente Consult",
+      "type": "test",
+      "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_ORACLE\\CONSULT\\Consultar_Paciente.robot"
+    }
+  ],
+  "saved_scenarios": [
+    {
+      "name": "Teste",
+      "items": [
+        {
+          "name": "# Busca",
+          "type": "keyword",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\src\\keywords\\LabKeywords.robot",
+          "database_scope": "Comum",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        },
+        {
+          "name": "Consultar Paciente Consult",
+          "type": "test",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_SQL\\CONSULT\\Consultar_Paciente.robot",
+          "database_scope": "SQL",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        },
+        {
+          "name": "Editar Aprazamento De Medicacao Consult",
+          "type": "test",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_ORACLE\\CONSULT\\Aprazar_Medicacoes.robot",
+          "database_scope": "ORACLE",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        }
+      ]
+    },
+    {
+      "name": "Teste 2",
+      "items": [
+        {
+          "name": "# Busca",
+          "type": "keyword",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\src\\keywords\\LabKeywords.robot",
+          "database_scope": "Comum",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        },
+        {
+          "name": "Consultar Paciente Consult",
+          "type": "test",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_SQL\\CONSULT\\Consultar_Paciente.robot",
+          "database_scope": "SQL",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        },
+        {
+          "name": "Editar Aprazamento De Medicacao Consult",
+          "type": "test",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_ORACLE\\CONSULT\\Aprazar_Medicacoes.robot",
+          "database_scope": "ORACLE",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        },
+        {
+          "name": "Gerar Registro Clinico Via Prontuario Consult Setor Pixeon",
+          "type": "test",
+          "file": "C:\\repositorio\\smart-desktop-automated-robot\\Tests_ORACLE\\CONSULT\\Laudos\\Gerar_Reg_Clinico_Pront_Setor_Pixeon.robot",
+          "database_scope": "ORACLE",
+          "full_argument_names": [],
+          "auto_argument_names": [],
+          "argument_names": [],
+          "arguments": {}
+        }
+      ]
+    }
+  ]
 }

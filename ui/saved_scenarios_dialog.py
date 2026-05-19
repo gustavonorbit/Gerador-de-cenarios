@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QWidget,
 )
+from PySide6.QtCore import Qt
 from typing import Callable
 
 
@@ -47,12 +48,12 @@ class SavedScenariosDialog(QDialog):
         scs = self.config.get_saved_scenarios()
         for s in scs:
             it = QListWidgetItem(f"{s.get('name')} ({len(s.get('items',[]))} items)")
-            it.setData(0, s)
+            it.setData(Qt.UserRole, s)
             self.list.addItem(it)
 
     def _selected(self):
         it = self.list.currentItem()
-        return it.data(0) if it else None
+        return it.data(Qt.UserRole) if it else None
 
     def _on_load(self):
         s = self._selected()

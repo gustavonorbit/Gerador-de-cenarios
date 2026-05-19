@@ -24,11 +24,8 @@ class ConfigManager:
     def save(self) -> None:
         if self._config is None:
             self._config = {}
-        try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self._config, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self._config, f, indent=2, ensure_ascii=False)
 
     # Note: repository/base resource paths are no longer managed here.
     # This class keeps a generic config file for other unrelated preferences.

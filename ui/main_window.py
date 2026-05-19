@@ -8,6 +8,8 @@ Behavior changes:
 """
 from pathlib import Path
 from typing import Optional, Dict, List
+import subprocess
+import sys
 import threading
 
 from PySide6.QtWidgets import (
@@ -93,7 +95,6 @@ class MainWindow(QMainWindow):
             # update enable state when items change
             self.kw_list.model().rowsInserted.connect(lambda *_: self._update_save_button_state())
             self.kw_list.model().rowsRemoved.connect(lambda *_: self._update_save_button_state())
-            self.save_scenario_btn.clicked.connect(self._on_save_scenario_clicked)
             self.saved_scenarios_btn.clicked.connect(self._open_saved_scenarios)
         except Exception:
             pass
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
         self.save_scenario_btn = QPushButton("+")
         self.save_scenario_btn.setEnabled(False)
         self.save_scenario_btn.setFixedWidth(30)
+        self.save_scenario_btn.clicked.connect(self._on_save_scenario_clicked)
         sh_layout.addWidget(self.save_scenario_btn)
         main_layout.addWidget(suite_header)
         main_layout.addWidget(self.kw_list)
@@ -256,10 +258,11 @@ class MainWindow(QMainWindow):
         name = meta.get("name")
         kind = meta.get("kind") or meta.get("type")
         path = meta.get("path") or meta.get("file")
-        li = QListWidgetItem(f"{name} [{kind}]")
+        li = QListWidgetItem(self._suite_item_text(name, kind, path, meta))
         li.setData(Qt.UserRole, meta)
         self.kw_list.addItem(li)
         self._set_item_widget(li, name, kind, path, meta)
+        self._update_save_button_state()
 
     def _handle_add_meta_with_args(self, meta: dict) -> None:
         """If the selected meta is a keyword and has arguments, prompt the user.
@@ -282,23 +285,33 @@ class MainWindow(QMainWindow):
             arg_names = self.finder.get_keyword_arguments(name, file_path=path)
         except Exception:
             arg_names = []
+        user_arg_names, auto_arg_names = self._split_user_and_auto_arguments(arg_names)
 
-        if not arg_names:
+        if not user_arg_names:
             # no args, add immediately
+            if auto_arg_names:
+                meta = dict(meta)
+                meta['full_argument_names'] = list(arg_names)
+                meta['auto_argument_names'] = auto_arg_names
+                meta['argument_names'] = []
+                meta['arguments'] = {}
             self.append_signal.emit(f"Keyword adicionada à suite: {name}")
             self._add_meta_to_suite(meta)
             return
 
         # has args -> ask user
         self.append_signal.emit(f"Keyword selecionada possui argumentos: {name}")
-        values = KeywordArgumentsDialog.get_arguments(self, name, arg_names)
+        values = KeywordArgumentsDialog.get_arguments(self, name, user_arg_names)
         if values is None:
             self.append_signal.emit(f"Adição cancelada pelo usuário: {name}")
             return
 
         # attach ordered names and values
-        meta['argument_names'] = list(arg_names)
-        meta['arguments'] = {k: values.get(k, "") for k in arg_names}
+        meta = dict(meta)
+        meta['full_argument_names'] = list(arg_names)
+        meta['auto_argument_names'] = auto_arg_names
+        meta['argument_names'] = list(user_arg_names)
+        meta['arguments'] = {k: values.get(k, "") for k in user_arg_names}
         self.append_signal.emit(f"Keyword adicionada à suite com argumentos: {name}")
         self._add_meta_to_suite(meta)
 
@@ -333,6 +346,9 @@ class MainWindow(QMainWindow):
                 'name': meta.get('name'),
                 'type': meta.get('kind') or meta.get('type'),
                 'file': meta.get('path') or meta.get('file'),
+                'database_scope': self._database_label_for_meta(meta),
+                'full_argument_names': meta.get('full_argument_names') or [],
+                'auto_argument_names': meta.get('auto_argument_names') or [],
                 'argument_names': meta.get('argument_names') or [],
                 'arguments': meta.get('arguments') or {}
             }
@@ -398,6 +414,8 @@ class MainWindow(QMainWindow):
                     except Exception:
                         current_db = "SQL"
                     self.append_signal.emit(f"Base de execução selecionada: {current_db}")
+                    if not self._prepare_desktop_database(current_db):
+                        return
                 else:
                     show_ui_state = "ativado" if self.show_ui_chk.isChecked() else "desativado"
                     self.append_signal.emit(f"Mostrar tela da automação (Web): {show_ui_state}")
@@ -410,12 +428,15 @@ class MainWindow(QMainWindow):
 
                 if keyword_items:
                     # pass the structured items (may include arguments) to suite builder
+                    suite_keyword_items = keyword_items
+                    if automation_type == 'Desktop':
+                        suite_keyword_items = self._with_execution_context_arguments(keyword_items, current_db)
                     resource_files = []
-                    for m in keyword_items:
+                    for m in suite_keyword_items:
                         f = m.get("path")
                         if f and f not in resource_files:
                             resource_files.append(f)
-                    temp_path = build_temp_suite(keyword_items, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
+                    temp_path = build_temp_suite(suite_keyword_items, repo_root=self.automation_root or self.app_root, resource_paths=resource_files if resource_files else None)
                     self.append_signal.emit("Iniciando execução (keywords)...")
                     # build params according to automation type
                     if automation_type == 'Desktop':
@@ -451,6 +472,49 @@ class MainWindow(QMainWindow):
 
         t = threading.Thread(target=_run_all, daemon=True)
         t.start()
+
+    def _prepare_desktop_database(self, database: str) -> bool:
+        automation_root = Path(self.automation_root or self.app_root)
+        script_by_database = {
+            "SQL": "baseSQL.py",
+            "SAP": "baseSap.py",
+            "ORACLE": "baseOracle.py",
+        }
+        database_key = (database or "").strip().upper()
+        script_name = script_by_database.get(database_key)
+        if not script_name:
+            self.append_signal.emit(f"Base de execução não suportada: {database}")
+            return False
+
+        script_path = automation_root / script_name
+        if not script_path.exists():
+            self.append_signal.emit(f"Arquivo de configuração da base não encontrado: {script_path}")
+            return False
+
+        self.append_signal.emit(f"Configurando base {database_key} com {script_name}...")
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script_path)],
+                cwd=str(automation_root),
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:
+            self.append_signal.emit(f"Falha ao configurar base {database_key}: {exc}")
+            return False
+
+        for output in (result.stdout, result.stderr):
+            for line in (output or "").splitlines():
+                if line.strip():
+                    self.append_signal.emit(line.strip())
+
+        combined_output = f"{result.stdout}\n{result.stderr}".lower()
+        if result.returncode != 0 or "ocorreu um erro" in combined_output:
+            self.append_signal.emit(f"Configuração da base {database_key} falhou. Execução cancelada.")
+            return False
+
+        self.append_signal.emit(f"Base {database_key} configurada com sucesso.")
+        return True
 
     def _handle_ui_command(self, cmd: str):
         try:
@@ -508,13 +572,22 @@ class MainWindow(QMainWindow):
                     'name': it.get('name'),
                     'kind': it.get('type'),
                     'path': it.get('file'),
+                    'database_scope': it.get('database_scope') or self._database_label_for_path(it.get('file')),
+                    'full_argument_names': it.get('full_argument_names') or [],
+                    'auto_argument_names': it.get('auto_argument_names') or [],
                     'argument_names': it.get('argument_names') or [],
                     'arguments': it.get('arguments') or {}
                 }
-                li = QListWidgetItem(f"{meta.get('name')} [{meta.get('kind') or meta.get('type')}]")
+                if not meta.get('full_argument_names') and meta.get('argument_names'):
+                    user_arg_names, auto_arg_names = self._split_user_and_auto_arguments(meta.get('argument_names') or [])
+                    meta['full_argument_names'] = list(meta.get('argument_names') or [])
+                    meta['auto_argument_names'] = auto_arg_names
+                    meta['argument_names'] = user_arg_names
+                li = QListWidgetItem(self._suite_item_text(meta.get('name'), meta.get('kind') or meta.get('type'), meta.get('path') or meta.get('file'), meta))
                 li.setData(Qt.UserRole, meta)
                 self.kw_list.addItem(li)
                 self._set_item_widget(li, meta.get('name'), meta.get('kind') or meta.get('type'), meta.get('path') or meta.get('file'), meta)
+            self._update_save_button_state()
             self.append_signal.emit(f"Cenário carregado: {scenario.get('name')}")
         except Exception as e:
             self.append_signal.emit(f"Falha ao carregar cenário: {e}")
@@ -534,11 +607,12 @@ class MainWindow(QMainWindow):
         arg_names = meta.get("argument_names") or []
         arguments = meta.get("arguments") or {}
         file_name = Path(path).name if path else ""
+        database_label = self._database_label_for_meta(meta)
         if arg_names:
             preview = ", ".join(f"{n}={arguments.get(n,'')}" for n in arg_names)
-            label = QLabel(f"{name} ({len(arg_names)} args) [{preview}] ({file_name})")
+            label = QLabel(f"[{database_label}] {name} ({len(arg_names)} args) [{preview}] ({file_name})")
         else:
-            label = QLabel(f"{name} [{kind}] ({file_name})")
+            label = QLabel(f"[{database_label}] {name} [{kind}] ({file_name})")
         layout.addWidget(label)
 
         remove_btn = QPushButton("Remover")
@@ -553,6 +627,7 @@ class MainWindow(QMainWindow):
                     # explicit deletion of widget
                     widget.deleteLater()
                     self.append_signal.emit(f"Item removido da suite: {name}")
+                    self._update_save_button_state()
             except Exception:
                 pass
 
@@ -560,6 +635,63 @@ class MainWindow(QMainWindow):
         layout.addWidget(remove_btn)
 
         self.kw_list.setItemWidget(list_item, widget)
+
+    def _suite_item_text(self, name: str, kind: str, path: str, meta: dict) -> str:
+        database_label = self._database_label_for_meta(meta)
+        return f"[{database_label}] {name} [{kind}]"
+
+    def _split_user_and_auto_arguments(self, arg_names: List[str]) -> tuple[List[str], List[str]]:
+        user_arg_names = []
+        auto_arg_names = []
+        for arg_name in arg_names or []:
+            if self._is_execution_context_argument(arg_name):
+                auto_arg_names.append(arg_name)
+            else:
+                user_arg_names.append(arg_name)
+        return user_arg_names, auto_arg_names
+
+    def _is_execution_context_argument(self, arg_name: str) -> bool:
+        normalized = str(arg_name or "").strip().upper().replace("-", "_")
+        return normalized == "CURRENT_DB"
+
+    def _with_execution_context_arguments(self, items: List[dict], current_db: str) -> List[dict]:
+        prepared_items = []
+        for item in items:
+            prepared = dict(item or {})
+            full_arg_names = list(prepared.get("full_argument_names") or prepared.get("argument_names") or [])
+            if not full_arg_names:
+                prepared_items.append(prepared)
+                continue
+
+            arguments = dict(prepared.get("arguments") or {})
+            has_current_db = False
+            for arg_name in full_arg_names:
+                if self._is_execution_context_argument(arg_name):
+                    arguments[arg_name] = current_db
+                    has_current_db = True
+
+            if has_current_db:
+                prepared["argument_names"] = full_arg_names
+                prepared["arguments"] = arguments
+            prepared_items.append(prepared)
+        return prepared_items
+
+    def _database_label_for_meta(self, meta: dict) -> str:
+        database = (meta or {}).get("database_scope") or self._database_label_for_path((meta or {}).get("path") or (meta or {}).get("file"))
+        database = str(database or "Comum").strip().upper()
+        if database in ("SQL", "SAP", "ORACLE"):
+            return database
+        return "Comum"
+
+    def _database_label_for_path(self, path: str) -> str:
+        path_upper = str(path or "").upper()
+        if "TESTS_SQL" in path_upper or "\\SQL\\" in path_upper or "/SQL/" in path_upper:
+            return "SQL"
+        if "TESTS_SAP" in path_upper or "\\SAP\\" in path_upper or "/SAP/" in path_upper:
+            return "SAP"
+        if "TESTS_ORACLE" in path_upper or "\\ORACLE\\" in path_upper or "/ORACLE/" in path_upper:
+            return "ORACLE"
+        return "Comum"
 
     def _refresh_favorites_ui(self):
         # Favorites are shown in a separate dialog; refresh suggestion stars
