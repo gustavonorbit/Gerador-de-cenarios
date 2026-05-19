@@ -710,6 +710,7 @@ class MainWindow(QMainWindow):
         try:
             k_count, t_count = self.finder.index()
             self.append_signal.emit(f"Projeto indexado com sucesso. {k_count} keywords e {t_count} testes encontrados.")
+            self.append_signal.emit("Rollback aplicado: removida blindagem extra de caminhos")
             modules = ", ".join(self.finder.detected_modules()) or "nenhum"
             databases = ", ".join(self.finder.detected_database_scopes()) or "nenhuma"
             self.append_signal.emit(f"Módulos detectados: {modules}")
